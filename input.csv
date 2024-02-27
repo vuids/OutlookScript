@@ -1,0 +1,2 @@
+﻿email,password,proxy_str,twofa
+example@outlook.com,Password123!,IP:Port:UserName:Password,2fa live string

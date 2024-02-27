@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer';
+ximport puppeteer from 'puppeteer';
 import csv from 'csv-parser';
 import fs from 'fs';
 import clipboardy from 'clipboardy';
@@ -134,7 +134,8 @@ function readCsv(filePath) {
 
 (async () => {
     try {
-        const csvPath = '/Users/connorfarrell/Documents/OutlookScript/outlookScript.csv';
+        //Input Path to CSV
+        const csvPath = '/Users/example/Downloads/input.csv';
         await main(csvPath);
     } catch (error) {
         console.error(`Error reading CSV file: ${error}`);

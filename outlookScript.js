@@ -46,7 +46,6 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         const page2 = await browser.newPage();
         await page2.goto('https://2fa.live');
         await delay(500);
-        //console.log(`2fa: ${twofa}`)
         await page2.waitForSelector('#listToken');
         await page2.type('#listToken', twofa);
         await page2.click('#submit');
@@ -114,12 +113,9 @@ function readCsv(filePath) {
         fs.createReadStream(filePath)
             .pipe(csv())
             .on('data', (data) => {
-                // Remove the extra character from the email field name if present
                 const emailField = data.hasOwnProperty('﻿email') ? '﻿email' : 'email';
                 data['email'] = data[emailField];
                 delete data[emailField];
-
-                //console.log('CSV Row:', data); // Print row data for debugging
                 results.push(data);
             })
             .on('end', () => {

@@ -105,7 +105,9 @@ function redirectConsoleToFile(fileName) {
         logStdout.write(new Date().toISOString() + ' ' + message + '\n');
     };
 }
-redirectConsoleToFile('/Users/connorfarrell/Documents/OutlookScript/logs.txt');
+
+//Input the path to your logs.txt file
+redirectConsoleToFile('/Path/To/Output/Here/OutlookScript/logs.txt');
 
 function readCsv(filePath) {
     return new Promise((resolve, reject) => {

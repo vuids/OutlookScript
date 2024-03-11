@@ -1,0 +1,84 @@
+const Imap = require('imap');
+const simpleParser = require('mailparser').simpleParser; // for parsing emails
+
+// IMAP server details
+const imapConfig = {
+    user: 'connor@vuids.com',
+    password: 'bavy puwa nnnn daag',
+    host: 'imap.gmail.com',
+    port: 993,
+    tls: true
+};
+
+// Email to match
+const targetEmail = 'XAVIERQF@HOTMAIL.COM';
+
+// Create IMAP connection
+const imap = new Imap(imapConfig);
+
+// Function to handle errors
+function handleError(err) {
+    console.error('Error occurred:', err);
+}
+
+// Function to process emails
+function processEmails() {
+    imap.openBox('INBOX', true, (err, box) => {
+        if (err) {
+            return handleError(err);
+        }
+
+        // Search criteria
+        const searchCriteria = [
+            `HEADER "From" "${targetEmail}"`,
+            'BODY "Here\'s your Code"'
+        ];
+
+        imap.search(searchCriteria, (err, results) => {
+            if (err) {
+                return handleError(err);
+            }
+
+            // Fetch each email
+            results.forEach((emailId) => {
+                const fetch = imap.fetch(emailId, { bodies: '' });
+                fetch.on('message', (msg) => {
+                    msg.on('body', (stream, info) => {
+                        simpleParser(stream, (err, parsed) => {
+                            if (err) {
+                                return handleError(err);
+                            }
+
+                            // Check if email matches the target email
+                            if (parsed.from.text === targetEmail) {
+                                // Extract specific portions
+                                const subject = parsed.subject;
+                                const body = parsed.text;
+
+                                // Search for the code
+                                const codeIndex = body.indexOf('Code');
+                                if (codeIndex !== -1 && body.length >= codeIndex + 6) {
+                                    const code = body.substring(codeIndex + 4, codeIndex + 10);
+                                    console.log('Subject:', subject);
+                                    console.log('Code:', code);
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    });
+}
+
+// Connect to the IMAP server
+imap.once('ready', () => {
+    console.log('Connected to IMAP server');
+    processEmails();
+});
+
+// Handle connection errors
+imap.once('error', handleError);
+
+// Connect to the IMAP server
+imap.connect();

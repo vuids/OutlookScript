@@ -1,4 +1,4 @@
-ximport puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer';
 import csv from 'csv-parser';
 import fs from 'fs';
 import clipboardy from 'clipboardy';
@@ -17,7 +17,7 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         const proxyUrl = `http://${ip}:${port}`;
         const logStream = fs.createWriteStream('logs.txt', { flags: 'a' }); // Open log file for appending
         const browser = await puppeteer.launch({
-            headless: true,
+            headless: false,
             args: [`--proxy-server=${proxyUrl}`],
         });
         const page = await browser.newPage();
@@ -49,9 +49,9 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         await page2.waitForSelector('#listToken');
         await page2.type('#listToken', twofa);
         await page2.click('#submit');
-        await delay(500);
+        await delay(750);
 
-        const twofaCode = await page2.evaluate(() => {
+        const twofaCode = await page2.evaluate((email) => {
             const inputElement = document.querySelector('#output');
             if (inputElement) {
                 const inputValue = inputElement.value;
@@ -60,12 +60,12 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
                 if (parts.length > 1) {
                     return parts[1].trim();
                 } else {
-                    throw new Error('2FA code format not recognized');
+                    throw new Error(`2FA code format not recognized on account: ${email}`);
                 }
             } else {
                 throw new Error('Input element for 2FA code not found');
             }
-        });
+        }, email);
 
         // Copy 2FA code to clipboard
         clipboardy.writeSync(twofaCode);
@@ -83,12 +83,46 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         await page.click('#acceptButton');
         await delay(3000);
 
-        await browser.close();
-
         console.log(`Successfully logged in for email: ${email}`);
         console.log(`On Proxy: ${proxyUrl}`);
+        await delay(500);
+        await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail');
+        await page.waitForSelector('#ModalFocusTrapZone2235 > div.ms-Modal-scrollableContent.scrollableContent-547 > div > div.pA2AO.css-419 > div.OjwNa > div.aHxfM', {visible: true, timeout: 3000}).catch(e => console.log('Successfully added TM email to non junk list.'));
+        await page.evaluate(() => {
+            const addButtonLabels = [...document.querySelectorAll('.ms-Button-label')].filter(el => el.textContent.includes('Add'));
+            if (addButtonLabels.length > 1) {
+                // Assuming the second button is the one you want
+                console.log('Second Add button found, attempting to click...');
+                addButtonLabels[1].click(); // Indexes are zero-based; 1 refers to the second element
+            } else {
+                console.log('The expected second Add button was not found.');
+            }
+        });
+        await page.waitForSelector('input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]', {visible: true});
+        await page.type('input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]', 'customer_support@email.ticketmaster.com');
+
+        await page.keyboard.press('Enter');
+        await delay(3000);
+
+        //await page.waitForNavigation({ waitUntil: 'networkidle0' });
+        await page.evaluate(() => {
+            const evt = new MouseEvent("click", {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            });
+            const saveButton = document.querySelector(".Xut6I button"); // Adjust selector as needed
+            saveButton.dispatchEvent(evt);
+            console.log('Successfully added TM email to non junk list.')
+        });
+
+
+
+        await delay(3000);
+
+        await browser.close();
     } catch (error) {
-        console.error(`Error with proxy ${proxyInfo}: ${error}`);
+        console.error(`TM address already added on: ${email}`);
     }
 }
 
@@ -107,7 +141,7 @@ function redirectConsoleToFile(fileName) {
 }
 
 //Input the path to your logs.txt file
-redirectConsoleToFile('/Path/To/Output/Here/OutlookScript/logs.txt');
+redirectConsoleToFile('/Users/connorfarrell/Documents/OutlookScript/logs.txt');
 
 function readCsv(filePath) {
     return new Promise((resolve, reject) => {
@@ -133,7 +167,7 @@ function readCsv(filePath) {
 (async () => {
     try {
         //Input Path to CSV
-        const csvPath = '/Users/example/Downloads/input.csv';
+        const csvPath = '/Users/connorfarrell/Documents/all_hotmails_updated.csv';
         await main(csvPath);
     } catch (error) {
         console.error(`Error reading CSV file: ${error}`);

@@ -1,15 +1,26 @@
 import puppeteer from 'puppeteer';
 import csv from 'csv-parser';
 import fs from 'fs';
-import clipboardy from 'clipboardy';
+import clipboard from 'clipboardy';
+import { createObjectCsvWriter as createCsvWriter } from 'csv-writer';
+
 
 async function main(csvPath) {
     const credentials = await readCsv(csvPath);
+    let successfulEmails = [];
 
     for (const { email, password, proxy_str, twofa } of credentials) {
-        await mainWithCredentials(email, password, proxy_str, twofa);
+        const isSuccess = await mainWithCredentials(email, password, proxy_str, twofa);
+        if (isSuccess) {
+            successfulEmails.push(email);
+        }
     }
+    // Rewrite the CSV, excluding successful emails
+    console.log('Starting to rewrite CSV...');
+    await rewriteCsv(csvPath, credentials, successfulEmails);
+    console.log('Finished rewriting CSV.');
 }
+
 
 async function mainWithCredentials(email, password, proxyInfo, twofa) {
     try {
@@ -17,7 +28,7 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         const proxyUrl = `http://${ip}:${port}`;
         const logStream = fs.createWriteStream('logs.txt', { flags: 'a' }); // Open log file for appending
         const browser = await puppeteer.launch({
-            headless: false,
+            headless: true,
             args: [`--proxy-server=${proxyUrl}`],
         });
         const page = await browser.newPage();
@@ -68,12 +79,12 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         }, email);
 
         // Copy 2FA code to clipboard
-        clipboardy.writeSync(twofaCode);
+        clipboard.writeSync(twofaCode);
 
         // Enter the 2FA code into the login form
         await page.bringToFront();
         await page.waitForSelector('#idTxtBx_SAOTCC_OTC');
-        const twoFACodeFromClipboard = clipboardy.readSync();
+        const twoFACodeFromClipboard = clipboard.readSync();
         await page.type('#idTxtBx_SAOTCC_OTC', twoFACodeFromClipboard);
 
         // Submit the 2FA code and wait for navigation
@@ -91,7 +102,6 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         await page.evaluate(() => {
             const addButtonLabels = [...document.querySelectorAll('.ms-Button-label')].filter(el => el.textContent.includes('Add'));
             if (addButtonLabels.length > 1) {
-                // Assuming the second button is the one you want
                 console.log('Second Add button found, attempting to click...');
                 addButtonLabels[1].click(); // Indexes are zero-based; 1 refers to the second element
             } else {
@@ -113,16 +123,15 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
             });
             const saveButton = document.querySelector(".Xut6I button"); // Adjust selector as needed
             saveButton.dispatchEvent(evt);
-            console.log('Successfully added TM email to non junk list.')
+            console.log('Successfully added TM email to non junk list.');
         });
-
-
-
-        await delay(3000);
+        await delay(1000);
 
         await browser.close();
+        return true;
     } catch (error) {
         console.error(`TM address already added on: ${email}`);
+        return false
     }
 }
 
@@ -141,7 +150,20 @@ function redirectConsoleToFile(fileName) {
 }
 
 //Input the path to your logs.txt file
-redirectConsoleToFile('/Users/connorfarrell/Documents/OutlookScript/logs.txt');
+redirectConsoleToFile('/Users/path/to/logs.txt');
+
+async function rewriteCsv(csvPath, credentials, successfulEmails) {
+    const csvWriter = createCsvWriter({
+        path: csvPath,
+        header: Object.keys(credentials[0]).map(key => ({id: key, title: key}))
+    });
+
+    const remainingCredentials = credentials.filter(({ email }) => !successfulEmails.includes(email));
+    console.log(remainingCredentials);
+    await csvWriter.writeRecords(remainingCredentials)
+        .then(() => console.log('CSV file has been rewritten without successfully processed emails.'));
+
+}
 
 function readCsv(filePath) {
     return new Promise((resolve, reject) => {
@@ -167,7 +189,7 @@ function readCsv(filePath) {
 (async () => {
     try {
         //Input Path to CSV
-        const csvPath = '/Users/connorfarrell/Documents/all_hotmails_updated.csv';
+        const csvPath = '/Users/path/to/outlookScript.csv';
         await main(csvPath);
     } catch (error) {
         console.error(`Error reading CSV file: ${error}`);

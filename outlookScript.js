@@ -192,16 +192,23 @@ function redirectConsoleToFile(fileName) {
 redirectConsoleToFile('/Users/Path/to/Files/OutlookScript/logs.txt');
 
 async function rewriteCsv(csvPath, credentials, successfulEmails) {
+    const timestamp = format(new Date(), 'yyyyMMddHHmmss'); // Formats date as YYYYMMDDHHMMSS
+    const newPath = csvPath.replace(/(\.csv)$/, `_${timestamp}$1`); // Appends timestamp before the file extension
+
     const csvWriter = createCsvWriter({
-        path: csvPath,
-        header: Object.keys(credentials[0]).map(key => ({id: key, title: key}))
+        path: newPath,
+        header: [
+            {id: 'email', title: 'email'},
+            {id: 'password', title: 'password'},
+            {id: 'proxy_str', title: 'proxy_str'},
+            {id: 'twofa', title: 'twofa'}
+        ]
     });
 
     const remainingCredentials = credentials.filter(({ email }) => !successfulEmails.includes(email));
     console.log(remainingCredentials);
     await csvWriter.writeRecords(remainingCredentials)
-        .then(() => console.log('CSV file has been rewritten without successfully processed emails.'));
-
+        .then(() => console.log(`CSV file has been created at ${newPath} without successfully processed emails.`));
 }
 
 function readCsv(filePath) {
@@ -210,18 +217,24 @@ function readCsv(filePath) {
         fs.createReadStream(filePath)
             .pipe(csv())
             .on('data', (data) => {
-                const emailField = data.hasOwnProperty('﻿email') ? '﻿email' : 'email';
-                data['email'] = data[emailField];
-                delete data[emailField];
-                results.push(data);
+                //console.log(`Read data: ${JSON.stringify(data)}`);  // Log each row as it's read
+                const cleanedData = {};
+                for (const key in data) {
+                    cleanedData[key.trim()] = data[key].trim();  // Trim keys and values to remove unexpected whitespace
+                }
+                results.push(cleanedData);
             })
             .on('end', () => {
+                //console.log(`Final parsed results: ${JSON.stringify(results)}`);
                 resolve(results);
             })
             .on('error', (error) => {
+                //console.error('Error reading CSV:', error);
                 reject(error);
             });
     });
+
+
 }
 
 

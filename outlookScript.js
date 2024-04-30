@@ -190,7 +190,7 @@ function redirectConsoleToFile(fileName) {
 
 //Input the path to your logs.txt file
 //************************************
-redirectConsoleToFile('/Users/Path/to/Files/OutlookScript/logs.txt');
+redirectConsoleToFile('/Users/connorfarrell/OutlookScript/logs.txt');
 
 async function rewriteCsv(csvPath, credentials, successfulEmails) {
     const timestamp = format(new Date(), 'yyyyMMddHHmmss'); // Formats date as YYYYMMDDHHMMSS
@@ -243,7 +243,7 @@ function readCsv(filePath) {
     try {
         //****************************************************************
         //Change to the path on your device that contains the CSV for input
-        const csvPath = '/Users/Path/To/File/OutlookScript/input.csv';
+        const csvPath = '/Users/connorfarrell/OutlookScript/input.csv';
         await main(csvPath);
     } catch (error) {
         console.error(`Error reading CSV file: ${error}`);

@@ -13,7 +13,7 @@
   "version": "1.0.0",
   "main": "outlookScript.js",
   "scripts": {
-    "start": "outlookScript.js"
+    "start": "node outlookScript.js"
   },
   "keywords": [],
   "author": "",

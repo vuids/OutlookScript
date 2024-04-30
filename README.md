@@ -10,7 +10,7 @@ JS script to automate logging into Outlook accounts using 2fa.live codes and val
 
 Input: /Your/Path/to/input.csv
 
-Log: /Your/Path/to/logs.xtx
+Log: /Your/Path/to/logs.txt
 
 
 ### Requirements
@@ -22,7 +22,7 @@ https://nodejs.org/en/download
 - Navigate to the project directory and run:
 npm install
 - To start the application, run:
-npm start
+node outlookScript.js
 - Script will run and output a new CSV with accounts that errored out to check or rerun in same folder as script is in.
 
 Feel free to raise any issues.

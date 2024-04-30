@@ -23,14 +23,16 @@ async function main(csvPath) {
 
 
 async function mainWithCredentials(email, password, proxyInfo, twofa) {
+    const [ip, port, name, pwd] = proxyInfo.split(':');
+    const proxyUrl = `http://${ip}:${port}`;
+    const logStream = fs.createWriteStream('logs.txt', { flags: 'a' }); // Open log file for appending
+
+    const browser = await puppeteer.launch({
+        headless: false,
+        args: [`--proxy-server=${proxyUrl}`],
+    });
     try {
-        const [ip, port, name, pwd] = proxyInfo.split(':');
-        const proxyUrl = `http://${ip}:${port}`;
-        const logStream = fs.createWriteStream('logs.txt', { flags: 'a' }); // Open log file for appending
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: [`--proxy-server=${proxyUrl}`],
-        });
+
         const page = await browser.newPage();
         page.on('dialog', async dialog => {
             if (dialog.type() === 'alert' && dialog.message().includes('proxy')) {
@@ -60,7 +62,7 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         await page2.waitForSelector('#listToken');
         await page2.type('#listToken', twofa);
         await page2.click('#submit');
-        await delay(750);
+        await delay(1000);
 
         const twofaCode = await page2.evaluate((email) => {
             const inputElement = document.querySelector('#output');
@@ -94,45 +96,82 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
         await page.click('#acceptButton');
         await delay(3000);
 
-        console.log(`Successfully logged in for email: ${email}`);
-        console.log(`On Proxy: ${proxyUrl}`);
+        console.log(`1.) Successfully logged in for email: ${email} on proxy: ${proxyUrl}`);
         await delay(500);
+
+        // Navigate to Junk Settings
         await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail');
-        await page.waitForSelector('#ModalFocusTrapZone2235 > div.ms-Modal-scrollableContent.scrollableContent-547 > div > div.pA2AO.css-419 > div.OjwNa > div.aHxfM', {visible: true, timeout: 3000}).catch(e => console.log('Successfully added TM email to non junk list.'));
-        await page.evaluate(() => {
-            const addButtonLabels = [...document.querySelectorAll('.ms-Button-label')].filter(el => el.textContent.includes('Add'));
-            if (addButtonLabels.length > 1) {
-                console.log('Second Add button found, attempting to click...');
-                addButtonLabels[1].click(); // Indexes are zero-based; 1 refers to the second element
+        await delay(4000);
+
+        // Activating page
+        const result = await page.evaluate(() => {
+            const x = window.innerWidth / 2;
+            const y = window.innerHeight / 2;
+            const element = document.elementFromPoint(x, y);
+            if (element) {
+                element.click(); // Directly click the element
+                return element.outerHTML; // Return the outer HTML for debugging
             } else {
-                console.log('The expected second Add button was not found.');
+                return 'No element found at the center of the screen.';
             }
         });
+        await page.waitForSelector('span[id="options-full-safeSendersDomainsV2"]', {visible: true}); // Ensure the heading is loaded and visible.
+
+        const addButtonXPath = "//span[@id='options-full-safeSendersDomainsV2']/following::button[contains(@class, 'ms-Button--command')][1]";
+        await page.waitForXPath(addButtonXPath, {visible: true, timeout: 30000}); // Wait for the 'Add' button to be visible
+
+        const [addButton] = await page.$x(addButtonXPath);
+        if (addButton) {
+            await addButton.click();
+            //console.log("Add button clicked successfully.");
+        } else {
+            console.error("Add button not found.");
+        }
+
+
+        await delay(1000);
         await page.waitForSelector('input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]', {visible: true});
         await page.type('input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]', 'customer_support@email.ticketmaster.com');
 
         await page.keyboard.press('Enter');
-        await delay(3000);
+        await delay(500);
 
-        //await page.waitForNavigation({ waitUntil: 'networkidle0' });
-        await page.evaluate(() => {
-            const evt = new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                view: window
+
+
+        try {
+            // Wait for the save button to be visible, implying it's interactable
+            await page.waitForSelector(".Xut6I button", { visible: true, timeout: 5000 });
+
+            // Execute the click via JavaScript in the browser context
+            let result = await page.evaluate(() => {
+                const saveButton = document.querySelector(".Xut6I button");
+                if (saveButton) {
+                    saveButton.click();  // Use click() if dispatchEvent is not necessary
+                    return 'Clicked';
+                }
+                return 'Button found but failed to click'; // In case something else prevents clicking
             });
-            const saveButton = document.querySelector(".Xut6I button"); // Adjust selector as needed
-            saveButton.dispatchEvent(evt);
-            console.log('Successfully added TM email to non junk list.');
-        });
-        await delay(1000);
 
+            if (result === 'Clicked') {
+                await delay(1000);
+                console.log('2.) Successfully added TM to non junk list.');
+            } else {
+                console.log(result); // Handle other outcomes, e.g., button found but not clicked
+            }
+        } catch (error) {
+            console.log('2.) TM email already added to safe sender list, all set!'); // Handle the timeout case or other errors
+        }
+
+        await delay(1000);
         await browser.close();
         return true;
     } catch (error) {
-        console.error(`TM address already added on: ${email}`);
+
+        console.log(error);
+        await browser.close();
         return false
     }
+    //browser.close();
 }
 
 function delay(time) {
@@ -150,7 +189,7 @@ function redirectConsoleToFile(fileName) {
 }
 
 //Input the path to your logs.txt file
-redirectConsoleToFile('/Users/path/to/logs.txt');
+redirectConsoleToFile('/Users/Path/to/Files/OutlookScript/logs.txt');
 
 async function rewriteCsv(csvPath, credentials, successfulEmails) {
     const csvWriter = createCsvWriter({
@@ -189,7 +228,7 @@ function readCsv(filePath) {
 (async () => {
     try {
         //Input Path to CSV
-        const csvPath = '/Users/path/to/outlookScript.csv';
+        const csvPath = '/Users/Path/To/File/OutlookScript/outlookScript.csv';
         await main(csvPath);
     } catch (error) {
         console.error(`Error reading CSV file: ${error}`);

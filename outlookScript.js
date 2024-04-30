@@ -28,7 +28,7 @@ async function mainWithCredentials(email, password, proxyInfo, twofa) {
     const logStream = fs.createWriteStream('logs.txt', { flags: 'a' }); // Open log file for appending
 
     const browser = await puppeteer.launch({
-        headless: false,
+        headless: true,
         args: [`--proxy-server=${proxyUrl}`],
     });
     try {

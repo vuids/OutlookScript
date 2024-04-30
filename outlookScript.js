@@ -189,6 +189,7 @@ function redirectConsoleToFile(fileName) {
 }
 
 //Input the path to your logs.txt file
+//************************************
 redirectConsoleToFile('/Users/Path/to/Files/OutlookScript/logs.txt');
 
 async function rewriteCsv(csvPath, credentials, successfulEmails) {
@@ -240,7 +241,8 @@ function readCsv(filePath) {
 
 (async () => {
     try {
-        //Input Path to CSV
+        //****************************************************************
+        //Change to the path on your device that contains the CSV for input
         const csvPath = '/Users/Path/To/File/OutlookScript/outlookScript.csv';
         await main(csvPath);
     } catch (error) {

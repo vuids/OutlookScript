@@ -243,7 +243,7 @@ function readCsv(filePath) {
     try {
         //****************************************************************
         //Change to the path on your device that contains the CSV for input
-        const csvPath = '/Users/Path/To/File/OutlookScript/outlookScript.csv';
+        const csvPath = '/Users/Path/To/File/OutlookScript/input.csv';
         await main(csvPath);
     } catch (error) {
         console.error(`Error reading CSV file: ${error}`);

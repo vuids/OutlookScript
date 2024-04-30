@@ -10,7 +10,7 @@ JS script to automate logging into Outlook accounts using 2fa.live codes and val
 
 Input: /Your/Path/to/input.csv
 
-Log: /Your/Path/to/logs.xtx
+Log: /Your/Path/to/logs.txt
 
 
 ### Requirements

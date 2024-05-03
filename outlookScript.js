@@ -37,4 +37,4 @@ async function main(csvPath) {
 
 
 // Change to your actual CSV path
-main('/Users/connorfarrell/OutlookScript/input.csv').catch(console.error);
+main('/Users/Path/OutlookScript/input.csv').catch(console.error);

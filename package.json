@@ -2,6 +2,7 @@
   "type": "module",
   "dependencies": {
     "clipboardy": "^4.0.0",
+    "csv-parse": "^5.5.5",
     "csv-parser": "^3.0.0",
     "csv-writer": "^1.6.0",
     "date-fns": "^3.6.0",

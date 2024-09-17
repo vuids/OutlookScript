@@ -7,7 +7,7 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
     const proxyUrl = `http://${ip}:${port}`;
 
     const browser = await puppeteer.launch({
-        headless: true,
+        headless: false,
         args: [`--proxy-server=${proxyUrl}`],
     });
     try {
@@ -78,72 +78,74 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
         console.log(`Successfully logged in for email: ${email} on proxy: ${proxyUrl}`);
         await delay(500);
 
-        // Navigate to Junk Settings
+
+
+// Navigate to the junk email settings page
         await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail');
         await delay(4000);
 
-        // Activating page
-        const result = await page.evaluate(() => {
-            const x = window.innerWidth / 2;
-            const y = window.innerHeight / 2;
-            const element = document.elementFromPoint(x, y);
-            if (element) {
-                element.click(); // Directly click the element
-                return element.outerHTML; // Return the outer HTML for debugging
+// Ensure the Junk Email section is loaded by checking for a visible, stable element like the heading
+        await page.waitForSelector('div[role="heading"]', { visible: true });
+
+// Scroll to the Add Safe Sender button (use XPath or a stable selector)
+        const addButtonXPath = "//button[contains(., 'Add safe sender')]";
+        const [addSafeSenderButton] = await page.$x(addButtonXPath);
+
+        if (addSafeSenderButton) {
+            // Scroll into view if needed (sometimes buttons are outside the view and can't be clicked directly)
+            await page.evaluate((button) => {
+                button.scrollIntoView();
+            }, addSafeSenderButton);
+
+            // Click the Add Safe Sender button
+            await addSafeSenderButton.click();
+            console.log("Clicked Add Safe Sender button.");
+
+            // Wait for the dynamic input field to appear after clicking "Add Safe Sender"
+            const dynamicInputSelector = 'input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]';
+            await page.waitForSelector(dynamicInputSelector, { visible: true });
+
+            // Type the email you want to add
+            await page.type(dynamicInputSelector, 'customer_support@email.ticketmaster.com');
+
+            // Click the "OK" button to confirm the safe sender entry
+            const okButtonXPath = "//button[contains(text(), 'OK')]";  // XPath for the "OK" button
+            const [okButton] = await page.$x(okButtonXPath);
+
+            if (okButton) {
+                await page.evaluate((button) => button.scrollIntoView(), okButton);  // Scroll into view if necessary
+                await okButton.click();
+                console.log("Clicked OK button.");
             } else {
-                return 'No element found at the center of the screen.';
+                console.error("OK button not found.");
             }
-        });
-        await page.waitForSelector('span[id="options-full-safeSendersDomainsV2"]', {visible: true}); // Ensure the heading is loaded and visible.
 
-        const addButtonXPath = "//span[@id='options-full-safeSendersDomainsV2']/following::button[contains(@class, 'ms-Button--command')][1]";
-        await page.waitForXPath(addButtonXPath, {visible: true, timeout: 30000}); // Wait for the 'Add' button to be visible
+            // Wait for a short delay to ensure the email is confirmed
+            await delay(1000);
 
-        const [addButton] = await page.$x(addButtonXPath);
-        if (addButton) {
-            await addButton.click();
-            //console.log("Add button clicked successfully.");
+            // Now click the "Save" button to finalize
+            const saveButtonXPath = "//button[contains(text(), 'Save')]";  // XPath for the "Save" button
+            const [saveButton] = await page.$x(saveButtonXPath);
+
+            if (saveButton) {
+                await page.evaluate((button) => button.scrollIntoView(), saveButton);  // Scroll into view if necessary
+                await saveButton.click();
+                console.log("Clicked Save button.");
+            } else {
+                console.error("Save button not found.");
+            }
+
+            // Optionally wait to ensure everything is processed
+            await delay(1000);
         } else {
-            console.error("Add button not found.");
-        }
-
-
-        await delay(1000);
-        await page.waitForSelector('input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]', {visible: true});
-        await page.type('input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]', 'customer_support@email.ticketmaster.com');
-
-        await page.keyboard.press('Enter');
-        await delay(500);
-
-
-
-        try {
-            // Wait for the save button to be visible, implying it's interactable
-            await page.waitForSelector(".Xut6I button", { visible: true, timeout: 5000 });
-
-            // Execute the click via JavaScript in the browser context
-            let result = await page.evaluate(() => {
-                const saveButton = document.querySelector(".Xut6I button");
-                if (saveButton) {
-                    saveButton.click();  // Use click() if dispatchEvent is not necessary
-                    return 'Clicked';
-                }
-                return 'Button found but failed to click'; // In case something else prevents clicking
-            });
-
-            if (result === 'Clicked') {
-                await delay(1000);
-                console.log('Successfully added TM to non junk list.');
-            } else {
-                console.log(result); // Handle other outcomes, e.g., button found but not clicked
-            }
-        } catch (error) {
-            console.log('TM email already added to safe sender list, all set!'); // Handle the timeout case or other errors
+            console.error("Add Safe Sender button not found.");
         }
 
         await delay(1000);
         await browser.close();
         return true;
+
+
     } catch (error) {
 
         console.log(error);
@@ -152,4 +154,3 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
     }
     //browser.close();
 }
-

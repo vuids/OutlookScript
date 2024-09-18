@@ -4,7 +4,7 @@ import { readCsv, rewriteCsv } from './helperFunctions.js';
 async function main(csvPath) {
     const credentials = await readCsv(csvPath);
     let successfulEmails = [];
-    const maxConcurrency = 5;
+    const maxConcurrency = 2;
     let activeWorkers = [];
 
     for (const credential of credentials) {

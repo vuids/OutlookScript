@@ -5,13 +5,14 @@ import clipboard from "clipboardy";
 export async function mainWithCredentials(email, password, proxyInfo, twofa) {
     const [ip, port, name, pwd] = proxyInfo.split(':');
     const proxyUrl = `http://${ip}:${port}`;
+    const safeSenderEmail = 'customer_support@email.ticketmaster.com'; // The email you want to add as a safe sender
 
     const browser = await puppeteer.launch({
-        headless: false,
+        headless: false, // Set to true for production or false for debugging
         args: [`--proxy-server=${proxyUrl}`],
     });
-    try {
 
+    try {
         const page = await browser.newPage();
         page.on('dialog', async dialog => {
             if (dialog.type() === 'alert' && dialog.message().includes('proxy')) {
@@ -19,138 +20,148 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
             }
         });
 
+        // Authenticate with the proxy
         await page.authenticate({
             username: name,
             password: pwd,
         });
 
-        await page.goto('https://login.microsoftonline.com/common/oauth2/authorize?client_id=00000002-0000-0ff1-ce00-000000000000&redirect_uri=https%3a%2f%2foutlook.office365.com%2fowa%2f&resource=00000002-0000-0ff1-ce00-000000000000&response_mode=form_post&response_type=code+id_token&scope=openid&msafed=1&msaredir=1&client-request-id=a10c2f98-47dd-1fcd-d3c8-0577fbe56597&protectedtoken=true&claims=%7b%22id_token%22%3a%7b%22xms_cc%22%3a%7b%22values%22%3a%5b%22CP1%22%5d%7d%7d%7d&nonce=638445885124429392.815dbea9-9410-4a64-ac9e-3bc68fac7ee4&state=DYuxDoIwFEVB_8Wt0pYW-gbiYKIMoImSaNj62ppAJBAgqHy9Hc49w80JgyDYejaekPoJ0iRWQkilJONCcIiB7xWTFp0GAoJRInQiiDbgSIwmUS9tUudE6FuM-o-ODnjN2G6a9ey8R2eb0Zm56jOd36jJy6T4wWKftwk5jEUHXd2927oq-eUuW-R0wcdpwCP43w7YyN6e2VSs0FQr_f4B');
+        // Navigate to Microsoft login page
+        console.log("Logging in to Microsoft...");
+        await page.goto('https://login.microsoftonline.com/', { waitUntil: 'networkidle2' });
+
+        // Enter email and proceed
         await page.waitForSelector('#i0116');
         await page.type('#i0116', email);
         await page.click('#idSIButton9');
-        await page.waitForNavigation();
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
 
+        // Enter password and proceed
         await page.waitForSelector('#i0118');
         await page.type('#i0118', password);
         await page.click('#idSIButton9');
-        await page.waitForNavigation();
 
+        // Immediately navigate to the 2FA page
         const page2 = await browser.newPage();
         await page2.goto('https://2fa.live');
-        await delay(500);
         await page2.waitForSelector('#listToken');
         await page2.type('#listToken', twofa);
         await page2.click('#submit');
         await delay(1000);
 
-        const twofaCode = await page2.evaluate((email) => {
+        const twofaCode = await page2.evaluate(() => {
             const inputElement = document.querySelector('#output');
             if (inputElement) {
                 const inputValue = inputElement.value;
-                // Split the value by '|' and return the second part
                 const parts = inputValue.split('|');
                 if (parts.length > 1) {
                     return parts[1].trim();
                 } else {
-                    throw new Error(`2FA code format not recognized on account: ${email}`);
+                    throw new Error(`2FA code format not recognized.`);
                 }
             } else {
-                throw new Error('Input element for 2FA code not found');
+                throw new Error('Input element for 2FA code not found.');
             }
-        }, email);
+        });
 
-        // Copy 2FA code to clipboard
         clipboard.writeSync(twofaCode);
 
-        // Enter the 2FA code into the login form
+        // Switch back to the login page and enter the 2FA code
         await page.bringToFront();
         await page.waitForSelector('#idTxtBx_SAOTCC_OTC');
-        const twoFACodeFromClipboard = clipboard.readSync();
-        await page.type('#idTxtBx_SAOTCC_OTC', twoFACodeFromClipboard);
-
-        // Submit the 2FA code and wait for navigation
+        await page.type('#idTxtBx_SAOTCC_OTC', clipboard.readSync());
         await page.click('#idSubmit_SAOTCC_Continue');
-        await page.waitForNavigation();
-        await page.waitForSelector('#acceptButton');
-        await page.click('#acceptButton');
-        await delay(3000);
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
+        console.log("Two-Factor Authentication completed.");
 
-        console.log(`Successfully logged in for email: ${email} on proxy: ${proxyUrl}`);
-        await delay(500);
+        // Handle the "Stay signed in?" prompt
+        try {
+            await page.waitForSelector('#acceptButton', { visible: true, timeout: 10000 }); // Wait for the "Yes" button
+            await page.click('#acceptButton'); // Click "Yes" to stay signed in
+            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 });
+            console.log("Clicked 'Yes' to stay signed in.");
+        } catch (err) {
+            console.log("'Stay signed in' prompt not found. Proceeding...");
+        }
 
+        // Add delay to ensure the page is stable before proceeding to Junk Email settings
+        console.log("Waiting for the page to stabilize...");
+        await delay(2000);
 
+        // Navigate to the Junk Email Settings page
+        console.log("Navigating to Junk Email Settings...");
+        await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail', {
+            waitUntil: 'networkidle2',
+            timeout: 60000
+        });
 
-// Navigate to the junk email settings page
-        await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail');
-        await delay(4000);
+        // Ensure the Junk Email section is loaded by checking for a visible heading
+        await page.waitForSelector('div[role="heading"]', { visible: true, timeout: 30000 });
+        console.log("Junk Email page loaded.");
 
-// Ensure the Junk Email section is loaded by checking for a visible, stable element like the heading
-        await page.waitForSelector('div[role="heading"]', { visible: true });
+        // Check if the email is already in the safe sender list
+        console.log(`Checking if ${safeSenderEmail} is already in the Safe Sender list...`);
+        const isEmailInSafeSenderList = await page.evaluate((safeSenderEmail) => {
+            const safeSenderElements = Array.from(document.querySelectorAll('div.amE0I span'));
+            return safeSenderElements.some((element) => element.textContent.trim() === safeSenderEmail);
+        }, safeSenderEmail);
 
-// Scroll to the Add Safe Sender button (use XPath or a stable selector)
+        if (isEmailInSafeSenderList) {
+            console.log(`${safeSenderEmail} is already in the Safe Sender list. Exiting...`);
+            await browser.close();
+            return { email, success: true };
+        }
+
+        // Add safe sender functionality (existing code)
         const addButtonXPath = "//button[contains(., 'Add safe sender')]";
         const [addSafeSenderButton] = await page.$x(addButtonXPath);
 
         if (addSafeSenderButton) {
-            // Scroll into view if needed (sometimes buttons are outside the view and can't be clicked directly)
-            await page.evaluate((button) => {
-                button.scrollIntoView();
-            }, addSafeSenderButton);
-
-            // Click the Add Safe Sender button
+            await page.evaluate((button) => button.scrollIntoView(), addSafeSenderButton);
             await addSafeSenderButton.click();
             console.log("Clicked Add Safe Sender button.");
 
-            // Wait for the dynamic input field to appear after clicking "Add Safe Sender"
+            // Wait for the dynamic input field
             const dynamicInputSelector = 'input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]';
-            await page.waitForSelector(dynamicInputSelector, { visible: true });
+            await page.waitForSelector(dynamicInputSelector, { visible: true, timeout: 10000 });
 
             // Type the email you want to add
-            await page.type(dynamicInputSelector, 'customer_support@email.ticketmaster.com');
+            await page.type(dynamicInputSelector, safeSenderEmail);
 
-            // Click the "OK" button to confirm the safe sender entry
-            const okButtonXPath = "//button[contains(text(), 'OK')]";  // XPath for the "OK" button
+            // Confirm by clicking OK
+            const okButtonXPath = "//button[contains(text(), 'OK')]";
             const [okButton] = await page.$x(okButtonXPath);
-
             if (okButton) {
-                await page.evaluate((button) => button.scrollIntoView(), okButton);  // Scroll into view if necessary
+                await page.evaluate((button) => button.scrollIntoView(), okButton);
                 await okButton.click();
                 console.log("Clicked OK button.");
             } else {
                 console.error("OK button not found.");
             }
 
-            // Wait for a short delay to ensure the email is confirmed
-            await delay(1000);
-
-            // Now click the "Save" button to finalize
-            const saveButtonXPath = "//button[contains(text(), 'Save')]";  // XPath for the "Save" button
+            // Save the changes by clicking Save
+            const saveButtonXPath = "//button[contains(text(), 'Save')]";
             const [saveButton] = await page.$x(saveButtonXPath);
-
             if (saveButton) {
-                await page.evaluate((button) => button.scrollIntoView(), saveButton);  // Scroll into view if necessary
+                await page.evaluate((button) => button.scrollIntoView(), saveButton);
                 await saveButton.click();
                 console.log("Clicked Save button.");
             } else {
                 console.error("Save button not found.");
             }
 
-            // Optionally wait to ensure everything is processed
-            await delay(1000);
+            await delay(1000); // Wait to ensure everything is processed
         } else {
             console.error("Add Safe Sender button not found.");
         }
 
         await delay(1000);
         await browser.close();
-        return true;
-
+        return { email, success: true };
 
     } catch (error) {
-
-        console.log(error);
+        console.error(`Error occurred: ${error.message}`);
         await browser.close();
-        return false
+        return { email, success: false };
     }
-    //browser.close();
 }

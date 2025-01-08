@@ -1,13 +1,9 @@
+// Updated helperFunctions.js
+import { createObjectCsvWriter as createCsvWriter } from 'csv-writer';
 import fs from 'fs';
 import csv from 'csv-parser';
-import { createObjectCsvWriter as createCsvWriter } from 'csv-writer';
-import { format } from 'date-fns';
-import puppeteer from 'puppeteer';
-import clipboard from "clipboardy";
-import path from 'path';
 
-
-// Reads CSV and trims spaces from keys and values
+// Function to read CSV and return an array of objects
 export function readCsv(filePath) {
     return new Promise((resolve, reject) => {
         const results = [];
@@ -25,176 +21,158 @@ export function readCsv(filePath) {
     });
 }
 
-// Load cookies if they exist
-export async function loadCookies(page, email) {
-    const cookiesFilePath = `./cookies/${email}.json`;
-    if (fs.existsSync(cookiesFilePath)) {
-        const cookies = JSON.parse(fs.readFileSync(cookiesFilePath, 'utf-8'));
-        await page.setCookie(...cookies);
-        console.log(`Cookies loaded for ${email}.`);
-        return true;
-    }
-    return false;
-}
-
-export async function saveCookies(page, email) {
-    const cookies = await page.cookies();
-    const cookiesDir = path.resolve('./cookies'); // Define the cookies directory
-    if (!fs.existsSync(cookiesDir)) {
-        fs.mkdirSync(cookiesDir); // Create directory if it doesn't exist
-    }
-    const cookiesFilePath = path.join(cookiesDir, `${email}.json`);
-    fs.writeFileSync(cookiesFilePath, JSON.stringify(cookies, null, 2));
-    console.log(`Cookies saved for ${email} at ${cookiesFilePath}`);
-}
-
-// Delay function for asynchronous operations
-export function delay(time) {
-    return new Promise(resolve => setTimeout(resolve, time));
-}
-
-// Redirects console output to a file and also outputs to the standard console
-export function redirectConsoleToFile(fileName) {
-    const logStream = fs.createWriteStream(fileName, { flags: 'a' });
-    const oldConsoleLog = console.log;
-    console.log = function(message) {
-        logStream.write(`${new Date().toISOString()} ${message}\n`);
-        oldConsoleLog.apply(console, arguments);
-    };
-}
-
-// Helper function to generate a dynamic filename for output files
-function getNextFileName(baseName, extension = 'csv') {
-    let counter = 1;
-    let fileName = `${baseName}${counter}.${extension}`;
-
-    while (fs.existsSync(fileName)) {
-        counter++;
-        fileName = `${baseName}${counter}.${extension}`;
-    }
-
-    return fileName;
-}
-
-// Function to write data to CSV with headers and dynamic file naming
-export function writeToCSV(data) {
+// Function to write data to a CSV file
+export function writeToCsv(data, baseName = 'output', extension = 'csv') {
     return new Promise((resolve, reject) => {
-        // Generate dynamic filename
-        const fileName = getNextFileName('output', 'csv');
+        let counter = 1;
+        let fileName = `${baseName}${counter}.${extension}`;
 
-        // Create the CSV writer with headers
+        // Generate a unique filename if one already exists
+        while (fs.existsSync(fileName)) {
+            counter++;
+            fileName = `${baseName}${counter}.${extension}`;
+        }
+
+        // Create CSV writer with headers
         const csvWriter = createCsvWriter({
             path: fileName,
-            header: [
-                { id: 'email', title: 'email' },
-                { id: 'password', title: 'password' },
-                { id: 'proxy_str', title: 'proxy_str' },
-                { id: 'twofa', title: 'twofa' }
-            ]
+            header: Object.keys(data[0]).map((key) => ({ id: key, title: key })),
         });
 
-        // Write data to CSV
-        csvWriter.writeRecords(data)
+        csvWriter
+            .writeRecords(data)
             .then(() => {
                 console.log(`Successfully written to file: ${fileName}`);
                 resolve();
             })
-            .catch(err => {
+            .catch((err) => {
                 console.error('Error writing to CSV:', err);
                 reject(err);
             });
     });
 }
 
-// Function to rewrite the CSV, excluding successfully processed emails
-export function rewriteCsv(csvPath, credentials, successfulEmails) {
-    const timestamp = format(new Date(), 'yyyyMMddHHmmss');
-    const newPath = csvPath.replace(/\.csv$/, `_${timestamp}.csv`);
 
-    const csvWriter = createCsvWriter({
-        path: newPath,
-        header: [
-            { id: 'email', title: 'email' },
-            { id: 'password', title: 'password' },
-            { id: 'proxy_str', title: 'proxy_str' },
-            { id: 'twofa', title: 'twofa' }
-        ]
-    });
-
-    const remainingCredentials = credentials.filter(({ email }) => !successfulEmails.includes(email));
-    return csvWriter.writeRecords(remainingCredentials)
-        .then(() => console.log(`CSV file has been rewritten at ${newPath} without successfully processed emails.`));
+// Delay function
+export async function delay(time) {
+    return new Promise((resolve) => setTimeout(resolve, time));
 }
 
-// Main function to log in with credentials and perform actions
-export async function mainWithCredentials(email, password, proxyInfo, twofa) {
-    const [ip, port, name, pwd] = proxyInfo.split(':');
-    const proxyUrl = `http://${ip}:${port}`;
+// Save cookies for successful sessions
+export async function saveCookies(page, email) {
+    const cookies = await page.cookies();
+    const filePath = `./cookies/${email}.json`;
+    fs.writeFileSync(filePath, JSON.stringify(cookies, null, 2));
+    console.log(`Cookies saved for ${email} at ${filePath}`);
+}
 
-    const browser = await puppeteer.launch({
-        headless: false,
-        args: [`--proxy-server=${proxyUrl}`],
-    });
+// Load cookies for existing sessions
+export async function loadCookies(page, email) {
+    const filePath = `./cookies/${email}.json`;
+    if (fs.existsSync(filePath)) {
+        const cookies = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        await page.setCookie(...cookies);
+        console.log(`Cookies loaded for ${email}`);
+        return true;
+    }
+    return false;
+}
+
+export async function robustClick(page, selector, maxRetries = 3, delayMs = 1000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const element = await page.$(selector);
+            if (element) {
+                await element.click();
+                console.log(`Clicked element with selector "${selector}" on attempt ${attempt}.`);
+                return true;
+            } else {
+                console.log(`Element with selector "${selector}" not found. Retrying (${attempt}/${maxRetries})...`);
+            }
+        } catch (error) {
+            console.error(`Error clicking element with selector "${selector}" on attempt ${attempt}: ${error.message}`);
+        }
+        await delay(delayMs); // Wait before retrying
+    }
+    console.error(`Failed to click element with selector "${selector}" after ${maxRetries} attempts.`);
+    return false;
+}
+
+
+
+// Click with retries and fallback to text search
+export async function clickWithRetries(page, selector, maxRetries = 3, delayMs = 2000, fallbackText = null) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            let element = await page.$(selector);
+            if (!element && fallbackText) {
+                console.log(`Retrying with fallback text: ${fallbackText}`);
+                element = await page.evaluateHandle((text) =>
+                        Array.from(document.querySelectorAll('button, input'))
+                            .find((el) => el.textContent.includes(text) || el.getAttribute('aria-label') === text),
+                    fallbackText
+                );
+            }
+
+            if (element) {
+                await element.click();
+                console.log(`Clicked element (${selector || fallbackText}) on attempt ${attempt}.`);
+                return true;
+            }
+        } catch (error) {
+            console.error(`Error clicking element (${selector || fallbackText}) on attempt ${attempt}: ${error.message}`);
+        }
+        await delay(delayMs);
+    }
+    console.error(`Failed to click element (${selector || fallbackText}) after ${maxRetries} attempts.`);
+    return false;
+}
+
+// robustType function: Ensures typing into an element with retries and logging
+export async function robustType(page, selector, text, maxRetries = 3, delayMs = 1000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const element = await page.$(selector);
+            if (element) {
+                await page.focus(selector); // Ensure the element is focused before typing
+                await page.evaluate((selector) => {
+                    const input = document.querySelector(selector);
+                    if (input) input.value = ''; // Clear any pre-existing text
+                }, selector);
+                await page.type(selector, text);
+                console.log(`Typed "${text}" into element with selector "${selector}" on attempt ${attempt}.`);
+                return true;
+            } else {
+                console.log(`Element with selector "${selector}" not found. Retrying (${attempt}/${maxRetries})...`);
+            }
+        } catch (error) {
+            console.error(`Error typing into element with selector "${selector}" on attempt ${attempt}: ${error.message}`);
+        }
+        await delay(delayMs); // Wait before retrying
+    }
+    console.error(`Failed to type into element with selector "${selector}" after ${maxRetries} attempts.`);
+    return false;
+}
+
+
+export async function logAndSavePage(page, description) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = `error_${description}_${timestamp}.png`;
 
     try {
-        const page = await browser.newPage();
-        page.on('dialog', async dialog => {
-            if (dialog.type() === 'alert' && dialog.message().includes('proxy')) {
-                await dialog.dismiss();
-            }
-        });
+        await page.screenshot({ path: fileName });
+        console.log(`Saved screenshot: ${fileName}`);
+    } catch (err) {
+        console.error(`Failed to save screenshot: ${err.message}`);
+    }
 
-        // Authenticate proxy if needed
-        await page.authenticate({ username: name, password: pwd });
-
-        // Try loading cookies first
-        const cookiesLoaded = await loadCookies(page, email);
-        if (cookiesLoaded) {
-            console.log(`Navigating with saved cookies for ${email}`);
-            await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail', { waitUntil: 'networkidle0' });
-
-            const isLoggedIn = await page.evaluate(() => {
-                return !!document.querySelector('div[role="heading"]');  // Check if the user is logged in
-            });
-
-            if (isLoggedIn) {
-                console.log(`Successfully reused session for ${email}`);
-                await browser.close();
-                return { email, success: true };
-            } else {
-                console.log(`Session expired for ${email}, re-logging in...`);
-            }
-        }
-
-        // Login flow if no valid session exists
-        console.log("Logging in to Microsoft...");
-        await page.goto('https://login.microsoftonline.com/');
-        await page.waitForSelector('#i0116');
-        await page.type('#i0116', email);
-        await page.click('#idSIButton9');
-        await page.waitForNavigation();
-
-        await page.waitForSelector('#i0118');
-        await page.type('#i0118', password);
-        await page.click('#idSIButton9');
-        await page.waitForNavigation();
-
-        console.log(`Handling 2FA for ${email}`);
-        const twofaCode = await handleTwoFactorAuth(page, email, twofa);  // Assuming 2FA code logic is implemented here
-
-        // After successful login, save cookies for future use
-        await saveCookies(page, email);
-        console.log(`Successfully logged in as ${email}.`);
-
-        // Perform the account modification (e.g., adding safe sender)
-        await performAccountActions(page, email);  // Replace with your existing account action logic
-
-        await browser.close();
-        return { email, success: true };
-
-    } catch (error) {
-        console.error(`Error occurred: ${error.message}`);
-        await browser.close();
-        return { email, success: false };
+    const htmlFileName = `error_${description}_${timestamp}.html`;
+    try {
+        const htmlContent = await page.content();
+        fs.writeFileSync(htmlFileName, htmlContent);
+        console.log(`Saved page HTML: ${htmlFileName}`);
+    } catch (err) {
+        console.error(`Failed to save page HTML: ${err.message}`);
     }
 }
+

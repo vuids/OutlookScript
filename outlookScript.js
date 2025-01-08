@@ -1,40 +1,45 @@
-import { Worker } from 'worker_threads';
-import { readCsv, rewriteCsv } from './helperFunctions.js';
+import { mainWithCredentials } from './mainWithCredentials.js';
+import { readCsv, writeToCsv } from './helperFunctions.js';
 
-async function main(csvPath) {
-    const credentials = await readCsv(csvPath);
-    let successfulEmails = [];
-    const maxConcurrency = 2;
-    let activeWorkers = [];
 
-    for (const credential of credentials) {
-        const worker = new Worker('./worker.js', { workerData: credential });
-        worker.on('message', (message) => {
-            console.log(message);
-            if (message.success) {
-                successfulEmails.push(message.email);
+async function processCredentials(inputFilePath) {
+    try {
+        console.log(`Reading input file: ${inputFilePath}`);
+        const credentials = await readCsv(inputFilePath);
+
+        const successes = [];
+        const failures = [];
+
+        console.log(`Processing ${credentials.length} credentials...`);
+        for (const { email, password, proxy_str, twofa } of credentials) {
+            console.log(`Starting task for ${email} with proxy ${proxy_str}...`);
+            const result = await mainWithCredentials(email, password, proxy_str, twofa);
+
+            if (result.success) {
+                console.log(`Successfully logged in: ${email}`);
+                successes.push({ email, password, proxy_str, twofa });
+            } else {
+                console.error(`Failed to process: ${email}`);
+                failures.push({ email, password, proxy_str, twofa, error: result.error || "Unknown error" });
             }
-        });
-        worker.on('error', error => console.error(error));
-        worker.on('exit', (code) => {
-            if (code !== 0)
-                console.error(`Worker stopped with exit code ${code}`);
-        });
-
-        activeWorkers.push(worker);
-        if (activeWorkers.length >= maxConcurrency) {
-            await Promise.all(activeWorkers.map(w => new Promise(resolve => w.on('exit', resolve))));
-            activeWorkers = [];
         }
+
+        console.log("Writing results to output files...");
+        if (successes.length > 0) {
+            await writeToCSV(successes, 'success.csv');
+            console.log("Successful results saved to success.csv");
+        }
+        if (failures.length > 0) {
+            await writeToCSV(failures, 'failed.csv');
+            console.log("Failed results saved to failed.csv");
+        }
+
+        console.log("Processing completed.");
+    } catch (error) {
+        console.error(`Error in processCredentials: ${error.message}`);
     }
-
-    // Wait for any remaining workers to finish
-    await Promise.all(activeWorkers.map(worker => new Promise(resolve => worker.on('exit', resolve))));
-
-    // Rewrite the CSV, excluding successful emails
-    await rewriteCsv(csvPath, credentials, successfulEmails);
 }
 
-
-// Change to your actual CSV path
-main('./input.csv').catch(console.error);
+// Run the script with the provided input file
+const inputFilePath = './input.csv';
+processCredentials(inputFilePath);

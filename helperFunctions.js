@@ -4,6 +4,8 @@ import { createObjectCsvWriter as createCsvWriter } from 'csv-writer';
 import { format } from 'date-fns';
 import puppeteer from 'puppeteer';
 import clipboard from "clipboardy";
+import path from 'path';
+
 
 // Reads CSV and trims spaces from keys and values
 export function readCsv(filePath) {
@@ -35,12 +37,15 @@ export async function loadCookies(page, email) {
     return false;
 }
 
-// Save cookies after successful login
 export async function saveCookies(page, email) {
     const cookies = await page.cookies();
-    const cookiesFilePath = `./cookies/${email}.json`;  // Store cookies in a file named after the email
+    const cookiesDir = path.resolve('./cookies'); // Define the cookies directory
+    if (!fs.existsSync(cookiesDir)) {
+        fs.mkdirSync(cookiesDir); // Create directory if it doesn't exist
+    }
+    const cookiesFilePath = path.join(cookiesDir, `${email}.json`);
     fs.writeFileSync(cookiesFilePath, JSON.stringify(cookies, null, 2));
-    console.log(`Cookies saved for ${email}.`);
+    console.log(`Cookies saved for ${email} at ${cookiesFilePath}`);
 }
 
 // Delay function for asynchronous operations
@@ -109,10 +114,10 @@ export function rewriteCsv(csvPath, credentials, successfulEmails) {
     const csvWriter = createCsvWriter({
         path: newPath,
         header: [
-            { id: 'email', title: 'Email' },
-            { id: 'password', title: 'Password' },
-            { id: 'proxy_str', title: 'Proxy String' },
-            { id: 'twofa', title: 'Two-Factor Auth' }
+            { id: 'email', title: 'email' },
+            { id: 'password', title: 'password' },
+            { id: 'proxy_str', title: 'proxy_str' },
+            { id: 'twofa', title: 'twofa' }
         ]
     });
 

@@ -1,5 +1,5 @@
 // Updated helperFunctions.js
-import { createObjectCsvWriter as createCsvWriter } from 'csv-writer';
+import { createObjectCsvWriter } from 'csv-writer';
 import fs from 'fs';
 import csv from 'csv-parser';
 
@@ -12,7 +12,7 @@ export function readCsv(filePath) {
             .on('data', (data) => {
                 const cleanedData = {};
                 for (const key in data) {
-                    cleanedData[key.trim()] = data[key].trim(); // Trim keys and values
+                    cleanedData[key.trim()] = data[key].trim();
                 }
                 results.push(cleanedData);
             })
@@ -21,63 +21,54 @@ export function readCsv(filePath) {
     });
 }
 
-// Function to write data to a CSV file
-export function writeToCsv(data, baseName = 'output', extension = 'csv') {
-    return new Promise((resolve, reject) => {
-        let counter = 1;
-        let fileName = `${baseName}${counter}.${extension}`;
-
-        // Generate a unique filename if one already exists
-        while (fs.existsSync(fileName)) {
-            counter++;
-            fileName = `${baseName}${counter}.${extension}`;
-        }
-
-        // Create CSV writer with headers
-        const csvWriter = createCsvWriter({
-            path: fileName,
-            header: Object.keys(data[0]).map((key) => ({ id: key, title: key })),
-        });
-
-        csvWriter
-            .writeRecords(data)
-            .then(() => {
-                console.log(`Successfully written to file: ${fileName}`);
-                resolve();
-            })
-            .catch((err) => {
-                console.error('Error writing to CSV:', err);
-                reject(err);
-            });
+export function writeToCSV(data, outputFileName = 'output.csv') {
+    const csvWriter = createObjectCsvWriter({
+        path: outputFileName,
+        header: Object.keys(data[0] || {}).map(key => ({ id: key, title: key })),
     });
+
+    return csvWriter.writeRecords(data)
+        .then(() => {
+            console.log(`Successfully written to ${outputFileName}`);
+        })
+        .catch(err => {
+            console.error(`Error writing to CSV: ${err.message}`);
+        });
 }
 
 
-// Delay function
 export async function delay(time) {
     return new Promise((resolve) => setTimeout(resolve, time));
 }
 
-// Save cookies for successful sessions
 export async function saveCookies(page, email) {
     const cookies = await page.cookies();
-    const filePath = `./cookies/${email}.json`;
-    fs.writeFileSync(filePath, JSON.stringify(cookies, null, 2));
-    console.log(`Cookies saved for ${email} at ${filePath}`);
-}
+    const cookiesFilePath = `./cookies/${email}.json`;
 
-// Load cookies for existing sessions
-export async function loadCookies(page, email) {
-    const filePath = `./cookies/${email}.json`;
-    if (fs.existsSync(filePath)) {
-        const cookies = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        await page.setCookie(...cookies);
-        console.log(`Cookies loaded for ${email}`);
-        return true;
+    if (cookies && cookies.length > 0) {
+        fs.writeFileSync(cookiesFilePath, JSON.stringify(cookies, null, 2));
+        console.log(`Cookies saved for ${email}.`);
+    } else {
+        console.warn(`No cookies to save for ${email}.`);
     }
-    return false;
 }
-
+export async function loadCookies(page, email) {
+    const cookiesFilePath = `./cookies/${email}.json`;
+    if (fs.existsSync(cookiesFilePath)) {
+        const cookies = JSON.parse(fs.readFileSync(cookiesFilePath, 'utf-8'));
+        if (cookies.every(cookie => cookie.name && cookie.value && cookie.domain)) {
+            await page.setCookie(...cookies);
+            console.log(`Cookies loaded for ${email}.`);
+            return true;
+        } else {
+            console.warn(`Invalid cookie structure for ${email}.`);
+            return false;
+        }
+    } else {
+        console.warn(`No cookie file found for ${email}.`);
+        return false;
+    }
+}
 export async function robustClick(page, selector, maxRetries = 3, delayMs = 1000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -97,10 +88,6 @@ export async function robustClick(page, selector, maxRetries = 3, delayMs = 1000
     console.error(`Failed to click element with selector "${selector}" after ${maxRetries} attempts.`);
     return false;
 }
-
-
-
-// Click with retries and fallback to text search
 export async function clickWithRetries(page, selector, maxRetries = 3, delayMs = 2000, fallbackText = null) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -113,7 +100,6 @@ export async function clickWithRetries(page, selector, maxRetries = 3, delayMs =
                     fallbackText
                 );
             }
-
             if (element) {
                 await element.click();
                 console.log(`Clicked element (${selector || fallbackText}) on attempt ${attempt}.`);
@@ -127,17 +113,15 @@ export async function clickWithRetries(page, selector, maxRetries = 3, delayMs =
     console.error(`Failed to click element (${selector || fallbackText}) after ${maxRetries} attempts.`);
     return false;
 }
-
-// robustType function: Ensures typing into an element with retries and logging
 export async function robustType(page, selector, text, maxRetries = 3, delayMs = 1000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             const element = await page.$(selector);
             if (element) {
-                await page.focus(selector); // Ensure the element is focused before typing
+                await page.focus(selector);
                 await page.evaluate((selector) => {
                     const input = document.querySelector(selector);
-                    if (input) input.value = ''; // Clear any pre-existing text
+                    if (input) input.value = '';
                 }, selector);
                 await page.type(selector, text);
                 console.log(`Typed "${text}" into element with selector "${selector}" on attempt ${attempt}.`);
@@ -148,7 +132,7 @@ export async function robustType(page, selector, text, maxRetries = 3, delayMs =
         } catch (error) {
             console.error(`Error typing into element with selector "${selector}" on attempt ${attempt}: ${error.message}`);
         }
-        await delay(delayMs); // Wait before retrying
+        await delay(delayMs);
     }
     console.error(`Failed to type into element with selector "${selector}" after ${maxRetries} attempts.`);
     return false;
@@ -175,4 +159,3 @@ export async function logAndSavePage(page, description) {
         console.error(`Failed to save page HTML: ${err.message}`);
     }
 }
-

@@ -41,7 +41,6 @@ async function processCredentialsConcurrently(credentials, maxConcurrent = 10) {
     const successStream = fs.createWriteStream('./success.csv', { flags: 'a' });
     const failedStream = fs.createWriteStream('./failed.csv', { flags: 'a' });
 
-    // Write headers if the files are empty
     if (successStream.bytesWritten === 0) {
         successStream.write('email,success\n');
     }
@@ -88,7 +87,7 @@ async function processCredentialsConcurrently(credentials, maxConcurrent = 10) {
 async function main() {
     try {
         const credentials = await readCsv('./input.csv');
-        const maxConcurrent = 2;
+        const maxConcurrent = 10;
         console.log(`Processing ${credentials.length} credentials with ${maxConcurrent} concurrent workers.`);
 
         await processCredentialsConcurrently(credentials, maxConcurrent);

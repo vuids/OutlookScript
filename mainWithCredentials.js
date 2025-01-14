@@ -37,12 +37,11 @@ const endpointActions = [
             const success = await robustClick(page, '#iNext', 3);
             if (!success) {
                 console.warn("Clicking 'Next' failed after retries. Trying 'Enter' key as a fallback...");
-                await page.keyboard.press('Enter'); // Simulate pressing Enter as a fallback
-                await delay(2000); // Allow time for potential navigation
+                await page.keyboard.press('Enter');
+                await delay(2000);
             }
         },
     },
-    // Other endpoint actions remain unchanged...
     {
         urls: ['https://login.live.com/ppsecure/post.srf', 'https://login.live.com/login.srf'],
         selector: '#acceptButton',
@@ -70,8 +69,39 @@ const endpointActions = [
         urls: ['https://account.live.com/interrupt/passkey'],
         selector: 'button[aria-label="Skip for now"]',
         action: async (page) => {
-            console.log("Clicked 'Skip for now' on Passkey Setup.");
-            await robustClick(page, 'button[aria-label="Skip for now"]', 3);
+            console.log("Handling 'Skip for now' on Passkey Setup...");
+            const maxRetries = 3;
+            let attempt = 0;
+
+            while (attempt < maxRetries) {
+                try {
+                    const skipButton = await page.$('button[aria-label="Skip for now"]');
+                    if (skipButton) {
+                        await skipButton.click();
+                        console.log("Clicked 'Skip for now' successfully.");
+                        return;
+                    } else {
+                        console.warn(`Attempt ${attempt + 1}: 'Skip for now' button not found. Retrying...`);
+                    }
+                } catch (error) {
+                    console.error(`Error clicking 'Skip for now' on attempt ${attempt + 1}: ${error.message}`);
+                }
+
+                // Shorter delay before retrying
+                await delay(500);
+                attempt++;
+            }
+            console.warn("'Skip for now' button could not be clicked after retries.");
+        },
+    },
+    {
+        urls: ['https://account.microsoft.com/?lang=en-US&refd=account.live.com&refp=landing&mkt=EN-US'],
+        action: async (page) => {
+            console.log("Stuck on account landing page. Redirecting to Junk Email Settings...");
+            await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail', {
+                waitUntil: 'networkidle2',
+                timeout: 30000,
+            });
         },
     },
     {
@@ -79,13 +109,12 @@ const endpointActions = [
         action: async (page) => {
             console.log("Reached Account Checkup. Waiting for 2 seconds to check for redirection...");
 
-            await delay(2000); // Wait to see if the page redirects naturally
+            await delay(2000);
 
             const currentUrl = page.url();
             if (currentUrl.includes('account-checkup')) {
                 console.log("Still on Account Checkup. Attempting to click the 'X' button.");
 
-                // Define the selector for the "X" button
                 const xButtonSelector = 'i[data-icon-name="Cancel"]';
 
                 try {
@@ -102,7 +131,7 @@ const endpointActions = [
                     console.error(`Error clicking 'X' button on Account Checkup: ${error.message}`);
                 }
 
-                // Attempt to navigate directly to the Junk Email settings after clicking "X"
+
                 console.log("Attempting navigation to Junk Email Settings...");
                 await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail', {
                     waitUntil: 'networkidle2',
@@ -114,8 +143,11 @@ const endpointActions = [
 
 ];
 
+
 async function handleDynamicLoginFlow(page) {
     let currentUrl = page.url();
+    let retryCount = 0;
+    const maxRetries = 10;
 
     while (!currentUrl.includes('outlook.live.com/mail/0/options/mail/junkEmail')) {
         console.log(`Current URL: ${currentUrl}`);
@@ -136,6 +168,19 @@ async function handleDynamicLoginFlow(page) {
                     return false;
                 }
             }
+        } else if (baseUrl.startsWith('https://account.microsoft.com')) {
+            console.warn("Detected Microsoft account landing page. Redirecting to junk email settings...");
+            try {
+                await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail', {
+                    waitUntil: 'networkidle2',
+                    timeout: 15000,
+                });
+                currentUrl = page.url();
+                continue;
+            } catch (navError) {
+                console.error("Failed to navigate to junk email settings from Microsoft account page.");
+                break;
+            }
         } else {
             console.warn(`Unhandled URL: ${currentUrl}. Retrying navigation in 2 seconds...`);
             await delay(2000);
@@ -148,60 +193,88 @@ async function handleDynamicLoginFlow(page) {
         }
 
         currentUrl = page.url();
+        retryCount++;
+
+        if (retryCount > maxRetries) {
+            console.error(`Exceeded max retries (${maxRetries}). Exiting dynamic login flow.`);
+            return false;
+        }
     }
 
     console.log(`Final URL: ${currentUrl}`);
     return currentUrl.includes('outlook.live.com/mail/0/options/mail/junkEmail');
 }
 
+
 async function addSafeSender(page) {
     console.log("Navigating to Safe Sender Settings...");
-    await page.waitForSelector('div[role="heading"]', { visible: true });
+    try {
+        await page.waitForSelector('div[role="heading"]', { visible: true });
 
-    const addButtonXPath = "//button[contains(., 'Add safe sender')]";
-    const [addSafeSenderButton] = await page.$x(addButtonXPath);
-
-    if (addSafeSenderButton) {
-        await page.evaluate((button) => button.scrollIntoView(), addSafeSenderButton);
-        await addSafeSenderButton.click();
-        console.log("Clicked Add Safe Sender button.");
-
-        const dynamicInputSelector = 'input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]';
-        await page.waitForSelector(dynamicInputSelector, { visible: true });
-        await page.type(dynamicInputSelector, 'customer_support@email.ticketmaster.com');
-
-        const okButtonXPath = "//button[contains(text(), 'OK')]";
-        const [okButton] = await page.$x(okButtonXPath);
-        if (okButton) {
-            await page.evaluate((button) => button.scrollIntoView(), okButton);
-            await okButton.click();
-            console.log("Clicked OK button.");
-        } else {
-            console.error("OK button not found.");
+        const acceptAllSelector = 'button.ms-Button--primary';
+        const acceptAllPopup = await page.$(acceptAllSelector);
+        if (acceptAllPopup) {
+            console.log("Detected 'Accept All' popup. Clicking the button...");
+            await acceptAllPopup.click();
+            await delay(1000);
         }
 
-        const saveButtonXPath = "//button[contains(text(), 'Save')]";
-        const [saveButton] = await page.$x(saveButtonXPath);
-        if (saveButton) {
-            await page.evaluate((button) => button.scrollIntoView(), saveButton);
-            await saveButton.click();
-            console.log("Clicked Save button.");
-        } else {
-            console.error("Save button not found.");
+        const chooseLayoutSelector = 'div.lgJQK';
+        const layoutPopup = await page.$(chooseLayoutSelector);
+        if (layoutPopup) {
+            console.log("Detected 'Choose Your Outlook Layout' popup. Clicking anywhere...");
+            await page.click('body'); // Clicking anywhere on the frame
+            await delay(1000);
         }
 
-        await delay(1000);
-    } else {
-        console.error("Add Safe Sender button not found.");
+        const addButtonXPath = "//button[contains(., 'Add safe sender')]";
+        const [addSafeSenderButton] = await page.$x(addButtonXPath);
+
+        if (addSafeSenderButton) {
+            await page.evaluate((button) => button.scrollIntoView(), addSafeSenderButton);
+            await addSafeSenderButton.click();
+            console.log("Clicked Add Safe Sender button.");
+
+            const dynamicInputSelector = 'input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]';
+            await page.waitForSelector(dynamicInputSelector, { visible: true });
+            await page.type(dynamicInputSelector, 'customer_support@email.ticketmaster.com');
+
+            const okButtonXPath = "//button[contains(text(), 'OK')]";
+            const [okButton] = await page.$x(okButtonXPath);
+            if (okButton) {
+                await page.evaluate((button) => button.scrollIntoView(), okButton);
+                await okButton.click();
+                console.log("Clicked OK button.");
+            } else {
+                console.error("OK button not found.");
+            }
+
+            const saveButtonXPath = "//button[contains(text(), 'Save')]";
+            const [saveButton] = await page.$x(saveButtonXPath);
+            if (saveButton) {
+                await page.evaluate((button) => button.scrollIntoView(), saveButton);
+                await saveButton.click();
+                console.log("Clicked Save button.");
+            } else {
+                console.error("Save button not found.");
+            }
+
+            await delay(1000);
+        } else {
+            console.error("Add Safe Sender button not found.");
+        }
+    } catch (error) {
+        console.error(`Error during the Safe Sender process: ${error.message}`);
     }
 }
+
 
 export async function mainWithCredentials(email, password, proxyInfo, twofa) {
     const [ip, port, name, pwd] = proxyInfo.split(':');
     const proxyUrl = `http://${ip}:${port}`;
 
     const browser = await puppeteer.launch({
-        headless: false,
+        headless: true,
         args: [`--proxy-server=${proxyUrl}`],
     });
 
@@ -212,11 +285,13 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
             console.log("Cookies loaded successfully, checking for access...");
             await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail');
             if (page.url().includes('outlook.live.com/mail/0/options/mail/junkEmail')) {
-                console.log(`Access successful for ${email} using cookies.`);
+                console.log("Junk Email page loaded successfully.");
                 await addSafeSender(page);
+                await saveCookies(page, email);
                 await browser.close();
                 return { email, success: true };
             }
+
             console.log("Cookies failed; proceeding with login.");
         }
 
@@ -233,7 +308,28 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
         await page.waitForSelector('#i0118', { visible: true });
         await page.type('#i0118', password);
         await page.click('#idSIButton9');
-        await page.waitForNavigation({ waitUntil: 'networkidle2' });
+
+        try {
+            // Wait for navigation or error message
+            await Promise.race([
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }),
+                page.waitForSelector('#i0118Error', { visible: true, timeout: 10000 })
+            ]);
+        } catch (e) {
+            console.log("Error or navigation detected. Checking for incorrect credentials...");
+        }
+
+// Check for incorrect credentials
+        const incorrectCredentials = await page.evaluate(() => {
+            const errorDiv = document.querySelector('#i0118Error');
+            return errorDiv && errorDiv.innerText.includes('Your account or password is incorrect');
+        });
+
+        if (incorrectCredentials) {
+            console.error("Error: Incorrect credentials. Exiting...");
+            throw new Error("Incorrect credentials.");
+        }
+
 
         console.log("Handling 2FA.");
 
@@ -269,27 +365,19 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
                 // Attempt to enter the 2FA code
                 console.log("Attempting to enter 2FA code.");
                 await page.bringToFront();
-                await page.waitForSelector('#idTxtBx_SAOTCC_OTC', { timeout: 5000 });
-                await page.type('#idTxtBx_SAOTCC_OTC', twofaCode);
+                await page.waitForSelector('#idTxtBx_SAOTCC_OTC, #otc-confirmation-input', { timeout: 5000 });
+                await page.type('#idTxtBx_SAOTCC_OTC, #otc-confirmation-input', twofaCode);
                 await delay(500);
 
-                // Check if the page remains on "Enter code"
-                const stillOnEnterCode = await page.evaluate(() => {
-                    const heading = document.querySelector('#idDiv_SAOTCC_Title');
-                    return heading && heading.innerText.includes('Enter code');
-                });
-
-                if (stillOnEnterCode) {
-                    console.warn("Initial 2FA code entry failed. Attempting CMD + V paste as a failsafe.");
-                    await page.focus('#idTxtBx_SAOTCC_OTC');
-                    await page.keyboard.down('Meta');
-                    await page.keyboard.press('V');
-                    await page.keyboard.up('Meta');
-                    await delay(500);
+                // Click submit button
+                const submitButtonSelector = '#idSubmit_SAOTCC_Continue, #oneTimeCodePrimaryButton';
+                const submitButton = await page.$(submitButtonSelector);
+                if (submitButton) {
+                    await submitButton.click();
+                    console.log("Clicked submit button after entering 2FA code.");
+                } else {
+                    console.warn("Submit button not found after entering 2FA code.");
                 }
-
-                console.log("Clicking Submit after entering 2FA code.");
-                await page.click('#idSubmit_SAOTCC_Continue');
 
                 // Wait for navigation
                 try {
@@ -301,6 +389,18 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
                 }
             } catch (error) {
                 console.error(`2FA submission failed: ${error.message}. Retries left: ${twofaRetries - 1}`);
+
+                // Check if the page contains the "Sign-in is blocked" message
+                const isSignInBlocked = await page.evaluate(() => {
+                    return document.body.innerText.includes(
+                        "Sign-in is blocked. You've tried to sign in too many times with an incorrect account or password."
+                    );
+                });
+
+                if (isSignInBlocked) {
+                    console.error("Sign-in is blocked. Exiting task.");
+                    throw new Error("Sign-in is blocked. You've tried to sign in too many times with an incorrect account or password.");
+                }
             }
 
             twofaRetries--;
@@ -310,6 +410,7 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
             console.error("Failed to complete 2FA submission after retries.");
             throw new Error("Failed to complete 2FA submission after retries.");
         }
+
 
         console.log("Handling dynamic login flow...");
         const success = await handleDynamicLoginFlow(page);
@@ -336,3 +437,4 @@ export async function mainWithCredentials(email, password, proxyInfo, twofa) {
         return { email, success: false, error: error.message };
     }
 }
+

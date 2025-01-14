@@ -1,5 +1,5 @@
 // Updated helperFunctions.js
-import { createObjectCsvWriter as createCsvWriter } from 'csv-writer';
+import { createObjectCsvWriter } from 'csv-writer';
 import fs from 'fs';
 import csv from 'csv-parser';
 
@@ -21,35 +21,19 @@ export function readCsv(filePath) {
     });
 }
 
-// Function to write data to a CSV file
-export function writeToCsv(data, baseName = 'output', extension = 'csv') {
-    return new Promise((resolve, reject) => {
-        let counter = 1;
-        let fileName = `${baseName}${counter}.${extension}`;
-
-        // Generate a unique filename if one already exists
-        while (fs.existsSync(fileName)) {
-            counter++;
-            fileName = `${baseName}${counter}.${extension}`;
-        }
-
-        // Create CSV writer with headers
-        const csvWriter = createCsvWriter({
-            path: fileName,
-            header: Object.keys(data[0]).map((key) => ({ id: key, title: key })),
-        });
-
-        csvWriter
-            .writeRecords(data)
-            .then(() => {
-                console.log(`Successfully written to file: ${fileName}`);
-                resolve();
-            })
-            .catch((err) => {
-                console.error('Error writing to CSV:', err);
-                reject(err);
-            });
+export function writeToCSV(data, outputFileName = 'output.csv') {
+    const csvWriter = createObjectCsvWriter({
+        path: outputFileName,
+        header: Object.keys(data[0] || {}).map(key => ({ id: key, title: key })),
     });
+
+    return csvWriter.writeRecords(data)
+        .then(() => {
+            console.log(`Successfully written to ${outputFileName}`);
+        })
+        .catch(err => {
+            console.error(`Error writing to CSV: ${err.message}`);
+        });
 }
 
 
@@ -58,24 +42,37 @@ export async function delay(time) {
     return new Promise((resolve) => setTimeout(resolve, time));
 }
 
-// Save cookies for successful sessions
 export async function saveCookies(page, email) {
     const cookies = await page.cookies();
-    const filePath = `./cookies/${email}.json`;
-    fs.writeFileSync(filePath, JSON.stringify(cookies, null, 2));
-    console.log(`Cookies saved for ${email} at ${filePath}`);
+    const cookiesFilePath = `./cookies/${email}.json`;
+
+    // Ensure proper structure for saved cookies
+    if (cookies && cookies.length > 0) {
+        fs.writeFileSync(cookiesFilePath, JSON.stringify(cookies, null, 2));
+        console.log(`Cookies saved for ${email}.`);
+    } else {
+        console.warn(`No cookies to save for ${email}.`);
+    }
 }
 
-// Load cookies for existing sessions
 export async function loadCookies(page, email) {
-    const filePath = `./cookies/${email}.json`;
-    if (fs.existsSync(filePath)) {
-        const cookies = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        await page.setCookie(...cookies);
-        console.log(`Cookies loaded for ${email}`);
-        return true;
+    const cookiesFilePath = `./cookies/${email}.json`;
+    if (fs.existsSync(cookiesFilePath)) {
+        const cookies = JSON.parse(fs.readFileSync(cookiesFilePath, 'utf-8'));
+
+        // Validate the cookies to ensure they have the required fields
+        if (cookies.every(cookie => cookie.name && cookie.value && cookie.domain)) {
+            await page.setCookie(...cookies);
+            console.log(`Cookies loaded for ${email}.`);
+            return true;
+        } else {
+            console.warn(`Invalid cookie structure for ${email}.`);
+            return false;
+        }
+    } else {
+        console.warn(`No cookie file found for ${email}.`);
+        return false;
     }
-    return false;
 }
 
 export async function robustClick(page, selector, maxRetries = 3, delayMs = 1000) {

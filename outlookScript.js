@@ -1,5 +1,5 @@
 import { mainWithCredentials } from './mainWithCredentials.js';
-import { readCsv, writeToCsv } from './helperFunctions.js';
+import { readCsv, writeToCSV} from './helperFunctions.js';
 
 
 async function processCredentials(inputFilePath) {

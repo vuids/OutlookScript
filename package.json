@@ -7,6 +7,7 @@
     "csv-writer": "^1.6.0",
     "date-fns": "^3.6.0",
     "fs": "^0.0.1-security",
+    "otplib": "^12.0.1",
     "puppeteer": "^13.7.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"

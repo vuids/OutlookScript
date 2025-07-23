@@ -1,0 +1,3 @@
+email,password,proxy_str,twofa
+example@hotmail.com,your_password,127.0.0.1:8080:username:password,YOUR_2FA_SECRET_KEY
+test@outlook.com,another_password,192.168.1.1:3128:user:pass,ANOTHER_2FA_SECRET

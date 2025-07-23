@@ -1,0 +1,134 @@
+node_modules
+# ===================================
+# SENSITIVE DATA - NEVER COMMIT THESE
+# ===================================
+
+# Credential files
+input.csv
+credentials.csv
+accounts.csv
+logins.csv
+*.csv
+
+# Cookie files
+cookies/
+*.json
+
+# Results and output files
+results/
+output/
+screenshots/
+logs/
+
+# Backup files
+*_backup.csv
+emergency_*.csv
+final_*_backup.csv
+
+# ===================================
+# SYSTEM AND ENVIRONMENT FILES
+# ===================================
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ===================================
+# OPERATING SYSTEM FILES
+# ===================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ===================================
+# DEVELOPMENT FILES
+# ===================================
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Debug files
+debug.log
+*.log
+
+# Test files (if you have any)
+test-results/
+coverage/
+
+# ===================================
+# BROWSER AND AUTOMATION FILES
+# ===================================
+
+# Puppeteer cache
+.puppeteer_cache/
+
+# Chrome user data
+chrome-user-data/
+
+# Browser downloads
+downloads/
+
+# ===================================
+# SECURITY FILES
+# ===================================
+
+# Private keys
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Certificate files
+*.crt
+*.cer
+
+# SSH keys
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# ===================================
+# CUSTOM PROJECT EXCLUSIONS
+# ===================================
+
+# Add any specific files/folders for your project
+config/secrets.js
+private/
+sensitive/

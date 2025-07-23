@@ -1,19 +1,48 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import clipboard from 'clipboardy';
-import { delay, saveCookies, loadCookies, robustClick } from './helperFunctions.js';
+import { delay, saveCookies, loadCookies, safeClickAndNavigate, robustClick } from './helperFunctions.js';
+import { markOtherTab } from './postLoginTasks.js'; 
+import fs from 'fs';
+import path from 'path';
+import { FrameManager } from 'puppeteer/lib/cjs/puppeteer/common/FrameManager.js';
+
+
+async function resolveSelector(page, selectors) {
+    for (const selector of selectors) {
+        if (await page.$(selector)) return selector;
+    }
+    throw new Error(`None of the selectors found: ${selectors.join(', ')}`);
+}
+const _origOnFrame = FrameManager.prototype._onFrameNavigated;
+FrameManager.prototype._onFrameNavigated = function(event) {
+  try {
+    return _origOnFrame.call(this, event);
+  } catch (err) {
+    if (err.message.includes('We either navigate top level')) {
+      console.warn('🐛 Swallowed FrameManager assertion:', err.message);
+      return;
+    }
+    throw err;
+  }
+};
+async function resolveElement(page, selectors) {
+    for (const selector of selectors) {
+        const el = await page.$(selector);
+        if (el) return el;
+    }
+    return null;
+}
 
 puppeteer.use(StealthPlugin());
 
+// Streamlined endpoint actions - simplified to avoid getting stuck
 const endpointActions = [
     {
         urls: ['https://privacynotice.account.microsoft.com/notice'],
-        selectors: ['#id__0', 'button.ms-Button--primary'], // Add multiple selectors
         action: async (page) => {
             console.log("Attempting to click 'OK' on Privacy Notice.");
-
             let success = false;
-
             for (const selector of ['#id__0', 'button.ms-Button--primary']) {
                 success = await robustClick(page, selector, 3);
                 if (success) {
@@ -21,17 +50,15 @@ const endpointActions = [
                     break;
                 }
             }
-
             if (!success) {
                 console.warn("Clicking 'OK' failed after retries. Trying 'Enter' key as a fallback...");
-                await page.keyboard.press('Enter'); // Simulate pressing Enter as a fallback
-                await delay(2000); // Allow time for potential navigation
+                await page.keyboard.press('Enter');
+                await delay(2000);
             }
         },
     },
     {
         urls: ['https://account.live.com/tou/accrue'],
-        selector: '#iNext',
         action: async (page) => {
             console.log("Attempting to click 'Next' on Terms of Use Accrual.");
             const success = await robustClick(page, '#iNext', 3);
@@ -44,55 +71,84 @@ const endpointActions = [
     },
     {
         urls: ['https://login.live.com/ppsecure/post.srf', 'https://login.live.com/login.srf'],
-        selector: '#acceptButton',
         action: async (page) => {
-            console.log("Clicked 'Yes' on Stay Signed In.");
-            await robustClick(page, '#acceptButton', 3);
+            console.log("🔍 On post.srf - checking page type...");
+            
+            // Check if this is a 2FA page - if so, don't interfere
+            const is2FAPage = await page.evaluate(() => {
+                const bodyText = document.body.innerText;
+                return bodyText.includes("Enter code") || 
+                       bodyText.includes("verification code") ||
+                       bodyText.includes("Enter the code") ||
+                       !!document.querySelector('#idTxtBx_SAOTCC_OTC') ||
+                       !!document.querySelector('input[name="otc"]') ||
+                       !!document.querySelector('input[placeholder*="code"]');
+            });
+            
+            if (is2FAPage) {
+                console.log("🔐 This is a 2FA page - skipping endpoint action");
+                return; // Don't do anything for 2FA pages
+            }
+            
+            // Only handle "Stay Signed In" if it's actually that page
+            const isStaySignedIn = await page.evaluate(() => {
+                const bodyText = document.body.innerText;
+                return bodyText.includes("Stay signed in") || 
+                       bodyText.includes("Stay signed in?") ||
+                       !!document.querySelector('button[data-testid="primaryButton"]');
+            });
+            
+            if (isStaySignedIn) {
+                console.log("Handling 'Stay Signed In' prompt...");
+                try {
+                    await page.waitForSelector('button[data-testid="primaryButton"]', { visible: true, timeout: 8000 });
+                
+                    const staySignedInBtn = await page.$('button[data-testid="primaryButton"]');
+                    if (staySignedInBtn) {
+                        await page.evaluate(btn => btn.scrollIntoView(), staySignedInBtn);
+                        await staySignedInBtn.click();
+                        console.log("✅ Clicked 'Yes' on Stay Signed In from endpoint action.");
+                        await delay(2000);
+                    } else {
+                        throw new Error("Stay signed in button not found");
+                    }
+                } catch (error) {
+                    console.warn(`⚠️ Stay signed in handling failed: ${error.message}`);
+                }
+            } else {
+                console.log("🤷 Page doesn't appear to be 2FA or Stay Signed In - no action needed");
+            }
         },
         failCondition: async (page) => {
-            const blockedMessage = await page.evaluate(() => {
-                return document.body.innerText.includes("Sign-in is blocked");
-            });
+            const blockedMessage = await page.evaluate(() =>
+                document.body.innerText.includes("Sign-in is blocked")
+            );
             return blockedMessage;
         },
         failLog: "Sign-in is blocked. You've tried to sign in too many times with an incorrect account or password."
     },
     {
-        urls: ['https://account.live.com/proofs/remind'],
-        selector: '#iLooksGood',
+        urls: [
+            'https://account.live.com/interrupt/passkey',
+            'https://account.live.com/interrupt/passkey/enroll'
+        ],
         action: async (page) => {
-            console.log("Clicked 'Looks Good' on Security Info Reminder.");
-            await robustClick(page, '#iLooksGood', 3);
-        },
-    },
-    {
-        urls: ['https://account.live.com/interrupt/passkey'],
-        selector: 'button[aria-label="Skip for now"]',
-        action: async (page) => {
-            console.log("Handling 'Skip for now' on Passkey Setup...");
-            const maxRetries = 3;
-            let attempt = 0;
-
-            while (attempt < maxRetries) {
-                try {
-                    const skipButton = await page.$('button[aria-label="Skip for now"]');
-                    if (skipButton) {
-                        await skipButton.click();
-                        console.log("Clicked 'Skip for now' successfully.");
-                        return;
-                    } else {
-                        console.warn(`Attempt ${attempt + 1}: 'Skip for now' button not found. Retrying...`);
-                    }
-                } catch (error) {
-                    console.error(`Error clicking 'Skip for now' on attempt ${attempt + 1}: ${error.message}`);
+            console.log("🔹 Handling Passkey prompt…");
+            for (let i = 0; i < 5; i++) {
+                const clickTarget = await resolveElement(page, [
+                    'button[aria-label="Skip for now"]',
+                    'button[data-testid="skipButton"]',
+                    '#iCancel'
+                ]);
+                if (clickTarget) {
+                    await clickTarget.click();
+                    console.log("✅ Clicked 'Skip for now'");
+                    return;
                 }
-
-                // Shorter delay before retrying
                 await delay(500);
-                attempt++;
             }
-            console.warn("'Skip for now' button could not be clicked after retries.");
-        },
+            console.warn("⚠️ Could not dismiss the Passkey prompt; continuing anyway.");
+        }
     },
     {
         urls: ['https://account.microsoft.com/?lang=en-US&refd=account.live.com&refp=landing&mkt=EN-US'],
@@ -108,30 +164,23 @@ const endpointActions = [
         urls: ['https://account.microsoft.com/account-checkup'],
         action: async (page) => {
             console.log("Reached Account Checkup. Waiting for 2 seconds to check for redirection...");
-
             await delay(2000);
-
             const currentUrl = page.url();
             if (currentUrl.includes('account-checkup')) {
                 console.log("Still on Account Checkup. Attempting to click the 'X' button.");
-
                 const xButtonSelector = 'i[data-icon-name="Cancel"]';
-
                 try {
                     const xButton = await page.$(xButtonSelector);
-
                     if (xButton) {
                         await xButton.click();
                         console.log("Clicked the 'X' button to dismiss Account Checkup.");
-                        await delay(1000); // Allow time for any resulting actions
+                        await delay(1000);
                     } else {
                         console.warn("The 'X' button was not found. Skipping action.");
                     }
                 } catch (error) {
                     console.error(`Error clicking 'X' button on Account Checkup: ${error.message}`);
                 }
-
-
                 console.log("Attempting navigation to Junk Email Settings...");
                 await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail', {
                     waitUntil: 'networkidle2',
@@ -140,301 +189,395 @@ const endpointActions = [
             }
         },
     },
-
 ];
 
-
-async function handleDynamicLoginFlow(page) {
-    let currentUrl = page.url();
-    let retryCount = 0;
-    const maxRetries = 10;
-
-    while (!currentUrl.includes('outlook.live.com/mail/0/options/mail/junkEmail')) {
-        console.log(`Current URL: ${currentUrl}`);
-
-        const baseUrl = currentUrl.split('?')[0];
-        const actionConfig = endpointActions.find((config) =>
-            config.urls.some((url) => baseUrl.startsWith(url))
-        );
-
-        if (actionConfig) {
-            try {
-                await actionConfig.action(page);
-                console.log(`Handled endpoint: ${baseUrl}`);
-            } catch (error) {
-                console.error(`Error handling endpoint ${baseUrl}: ${error.message}`);
-                if (actionConfig.failCondition && (await actionConfig.failCondition(page))) {
-                    console.error(actionConfig.failLog);
-                    return false;
-                }
-            }
-        } else if (baseUrl.startsWith('https://account.microsoft.com')) {
-            console.warn("Detected Microsoft account landing page. Redirecting to junk email settings...");
-            try {
-                await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail', {
-                    waitUntil: 'networkidle2',
-                    timeout: 15000,
-                });
-                currentUrl = page.url();
-                continue;
-            } catch (navError) {
-                console.error("Failed to navigate to junk email settings from Microsoft account page.");
-                break;
-            }
-        } else {
-            console.warn(`Unhandled URL: ${currentUrl}. Retrying navigation in 2 seconds...`);
-            await delay(2000);
-        }
-
-        try {
-            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
-        } catch {
-            console.log("No navigation detected, continuing loop...");
-        }
-
-        currentUrl = page.url();
-        retryCount++;
-
-        if (retryCount > maxRetries) {
-            console.error(`Exceeded max retries (${maxRetries}). Exiting dynamic login flow.`);
-            return false;
-        }
-    }
-
-    console.log(`Final URL: ${currentUrl}`);
-    return currentUrl.includes('outlook.live.com/mail/0/options/mail/junkEmail');
-}
-
-
-async function addSafeSender(page) {
-    console.log("Navigating to Safe Sender Settings...");
+// Helper function for 2FA code generation
+async function getTwoFACode(browser, secret) {
+    const twofaPage = await browser.newPage();
     try {
-        await page.waitForSelector('div[role="heading"]', { visible: true });
-
-        const acceptAllSelector = 'button.ms-Button--primary';
-        const acceptAllPopup = await page.$(acceptAllSelector);
-        if (acceptAllPopup) {
-            console.log("Detected 'Accept All' popup. Clicking the button...");
-            await acceptAllPopup.click();
-            await delay(1000);
-        }
-
-        const chooseLayoutSelector = 'div.lgJQK';
-        const layoutPopup = await page.$(chooseLayoutSelector);
-        if (layoutPopup) {
-            console.log("Detected 'Choose Your Outlook Layout' popup. Clicking anywhere...");
-            await page.click('body'); // Clicking anywhere on the frame
-            await delay(1000);
-        }
-
-        const addButtonXPath = "//button[contains(., 'Add safe sender')]";
-        const [addSafeSenderButton] = await page.$x(addButtonXPath);
-
-        if (addSafeSenderButton) {
-            await page.evaluate((button) => button.scrollIntoView(), addSafeSenderButton);
-            await addSafeSenderButton.click();
-            console.log("Clicked Add Safe Sender button.");
-
-            const dynamicInputSelector = 'input[placeholder="Example: abc123@fourthcoffee.com for sender, fourthcoffee.com for domain."]';
-            await page.waitForSelector(dynamicInputSelector, { visible: true });
-            await page.type(dynamicInputSelector, 'customer_support@email.ticketmaster.com');
-
-            const okButtonXPath = "//button[contains(text(), 'OK')]";
-            const [okButton] = await page.$x(okButtonXPath);
-            if (okButton) {
-                await page.evaluate((button) => button.scrollIntoView(), okButton);
-                await okButton.click();
-                console.log("Clicked OK button.");
-            } else {
-                console.error("OK button not found.");
-            }
-
-            const saveButtonXPath = "//button[contains(text(), 'Save')]";
-            const [saveButton] = await page.$x(saveButtonXPath);
-            if (saveButton) {
-                await page.evaluate((button) => button.scrollIntoView(), saveButton);
-                await saveButton.click();
-                console.log("Clicked Save button.");
-            } else {
-                console.error("Save button not found.");
-            }
-
-            await delay(1000);
-        } else {
-            console.error("Add Safe Sender button not found.");
-        }
+      console.log("🔑 Opening 2FA.live to generate code...");
+      await twofaPage.goto('https://2fa.live', { waitUntil: 'domcontentloaded', timeout: 10000 });
+      
+      // Wait for the token input field
+      await twofaPage.waitForSelector('#listToken', { visible: true, timeout: 5000 });
+      
+      // Clear any existing content and type the secret
+      await twofaPage.click('#listToken', { clickCount: 3 });
+      await twofaPage.type('#listToken', secret, { delay: 20 });
+      
+      // Submit the form
+      await twofaPage.click('#submit');
+      
+      // Wait for the output
+      await twofaPage.waitForSelector('#output', { visible: true, timeout: 10000 });
+      
+      // Get the code
+      const raw = await twofaPage.$eval('#output', el => el.value);
+      const code = raw.split('|')[1]?.trim();
+      
+      if (!code || code.length !== 6) {
+        throw new Error(`Invalid 2FA code format: ${raw}`);
+      }
+      
+      console.log(`✅ Generated 2FA code: ${code}`);
+      return code;
+      
     } catch (error) {
-        console.error(`Error during the Safe Sender process: ${error.message}`);
+      console.error(`❌ Failed to generate 2FA code: ${error.message}`);
+      throw error;
+    } finally {
+      await twofaPage.close();
     }
-}
+  }
+  
+  // 2FA handling function
+  async function handle2FA(page, browser, twofa) {
+    console.log("🔐 Detecting 2FA requirement...");
+    
+    // Wait for 2FA prompt to appear
+    try {
+      await page.waitForSelector([
+        '#idTxtBx_SAOTCC_OTC',
+        '#otc-confirmation-input', 
+        'input[name="otc"]',
+        'input[placeholder*="code"]'
+      ].join(','), { visible: true, timeout: 15000 });
+      
+      console.log("✅ 2FA prompt detected");
+    } catch (error) {
+      console.error("❌ 2FA prompt not found:", error.message);
+      throw new Error("2FA prompt not detected within timeout");
+    }
+    
+    // Try up to 3 times to enter 2FA code
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`🔑 2FA attempt ${attempt}/3...`);
+        
+        // Generate fresh 2FA code
+        const code = await getTwoFACode(browser, twofa);
+        
+        // Find the input field
+        const inputSel = await resolveSelector(page, [
+          '#idTxtBx_SAOTCC_OTC',
+          '#otc-confirmation-input',
+          'input[name="otc"]',
+          'input[placeholder*="code"]'
+        ]);
+        
+        // Clear and enter the code
+        await page.click(inputSel, { clickCount: 3 });
+        await page.type(inputSel, code, { delay: 50 });
+        
+        // Find and click submit button
+        const submitBtn = await resolveElement(page, [
+          '#idSubmit_SAOTCC_Continue',
+          '#oneTimeCodePrimaryButton',
+          'button[type="submit"]',
+          'input[type="submit"]'
+        ]);
+        
+        if (!submitBtn) {
+          throw new Error("2FA submit button not found");
+        }
+        
+        await safeClickAndNavigate(page, submitBtn);
+        
+        // Wait for either success (inbox) or error
+        await Promise.race([
+          page.waitForSelector('div[aria-label="Message list"], span.ms-Pivot-text', { timeout: 15000 }),
+          page.waitForSelector('#idTxtBx_SAOTCC_OTC', { timeout: 5000 }) // Still on 2FA page = failed
+        ]);
+        
+        // Check if we're still on 2FA page (code was wrong)
+        const stillOn2FA = await page.$('#idTxtBx_SAOTCC_OTC');
+        if (stillOn2FA) {
+          console.warn(`⚠️ 2FA code rejected on attempt ${attempt}`);
+          if (attempt === 3) throw new Error("2FA failed after 3 attempts");
+          await delay(2000); // Wait before retry
+          continue;
+        }
+        
+        // Success!
+        console.log("✅ 2FA completed successfully");
+        return;
+        
+      } catch (error) {
+        console.error(`❌ 2FA attempt ${attempt} failed: ${error.message}`);
+        if (attempt === 3) {
+          throw new Error(`2FA failed after 3 attempts: ${error.message}`);
+        }
+        await delay(2000);
+      }
+    }
+  }
 
+  // Helper function to process endpoint actions
+  async function processEndpointActions(page) {
+    const currentUrl = page.url();
+    console.log(`🔍 Checking endpoint actions for: ${currentUrl}`);
+    
+    for (const action of endpointActions) {
+      const matchingUrl = action.urls.find(url => currentUrl.includes(url));
+      if (matchingUrl) {
+        console.log(`✅ Found matching endpoint action for: ${matchingUrl}`);
+        
+        // Check fail condition if it exists
+        if (action.failCondition) {
+          const shouldFail = await action.failCondition(page);
+          if (shouldFail) {
+            console.error(`❌ Fail condition met: ${action.failLog || 'Unknown failure'}`);
+            throw new Error(action.failLog || 'Endpoint action failed');
+          }
+        }
+        
+        // Execute the action
+        await action.action(page);
+        await delay(1000); // Give time for action to complete
+        return true; // Action was processed
+      }
+    }
+    return false; // No matching action found
+  }
 
-export async function mainWithCredentials(email, password, proxyInfo, twofa) {
-    const [ip, port, name, pwd] = proxyInfo.split(':');
+  export async function mainWithCredentials(email, password, proxyInfo, twofa) {
+    const [ip, port, username, pwd] = proxyInfo.split(':');
     const proxyUrl = `http://${ip}:${port}`;
-
+  
     const browser = await puppeteer.launch({
-        headless: true,
-        args: [`--proxy-server=${proxyUrl}`],
+      headless: false,
+      args: [`--proxy-server=${proxyUrl}`],
     });
-
-    try {
-        const page = await browser.newPage();
-
-        if (await loadCookies(page, email)) {
-            console.log("Cookies loaded successfully, checking for access...");
-            await page.goto('https://outlook.live.com/mail/0/options/mail/junkEmail');
-            if (page.url().includes('outlook.live.com/mail/0/options/mail/junkEmail')) {
-                console.log("Junk Email page loaded successfully.");
-                await addSafeSender(page);
-                await saveCookies(page, email);
-                await browser.close();
-                return { email, success: true };
-            }
-
-            console.log("Cookies failed; proceeding with login.");
-        }
-
-        await page.authenticate({ username: name, password: pwd });
-        await page.goto('https://login.live.com', { waitUntil: 'networkidle2' });
-
-        console.log("Email input loaded. Pasting email.");
-        await page.waitForSelector('#i0116', { visible: true });
-        await page.type('#i0116', email);
-        await page.click('#idSIButton9');
-        await page.waitForNavigation({ waitUntil: 'networkidle2' });
-
-        console.log("Password input loaded. Pasting password.");
-        await page.waitForSelector('#i0118', { visible: true });
-        await page.type('#i0118', password);
-        await page.click('#idSIButton9');
-
-        try {
-            // Wait for navigation or error message
-            await Promise.race([
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }),
-                page.waitForSelector('#i0118Error', { visible: true, timeout: 10000 })
-            ]);
-        } catch (e) {
-            console.log("Error or navigation detected. Checking for incorrect credentials...");
-        }
-
-// Check for incorrect credentials
-        const incorrectCredentials = await page.evaluate(() => {
-            const errorDiv = document.querySelector('#i0118Error');
-            return errorDiv && errorDiv.innerText.includes('Your account or password is incorrect');
-        });
-
-        if (incorrectCredentials) {
-            console.error("Error: Incorrect credentials. Exiting...");
-            throw new Error("Incorrect credentials.");
-        }
-
-
-        console.log("Handling 2FA.");
-
-        let twofaRetries = 3;
-        let twofaCode;
-
-        while (twofaRetries > 0) {
-            try {
-                const page2 = await browser.newPage();
-                await page2.goto('https://2fa.live');
-                await delay(500);
-
-                await page2.waitForSelector('#listToken', { timeout: 5000 });
-                await page2.type('#listToken', twofa);
-                await page2.click('#submit');
-
-                await delay(1000);
-
-                // Retrieve 2FA code
-                twofaCode = await page2.evaluate(() => {
-                    const inputElement = document.querySelector('#output');
-                    return inputElement ? inputElement.value.split('|')[1].trim() : null;
-                });
-
-                if (!twofaCode) {
-                    throw new Error('Failed to retrieve 2FA code from 2fa.live.');
-                }
-
-                clipboard.writeSync(twofaCode);
-                console.log(`Retrieved 2FA code: ${twofaCode}`);
-                await page2.close();
-
-                // Attempt to enter the 2FA code
-                console.log("Attempting to enter 2FA code.");
-                await page.bringToFront();
-                await page.waitForSelector('#idTxtBx_SAOTCC_OTC, #otc-confirmation-input', { timeout: 5000 });
-                await page.type('#idTxtBx_SAOTCC_OTC, #otc-confirmation-input', twofaCode);
-                await delay(500);
-
-                // Click submit button
-                const submitButtonSelector = '#idSubmit_SAOTCC_Continue, #oneTimeCodePrimaryButton';
-                const submitButton = await page.$(submitButtonSelector);
-                if (submitButton) {
-                    await submitButton.click();
-                    console.log("Clicked submit button after entering 2FA code.");
-                } else {
-                    console.warn("Submit button not found after entering 2FA code.");
-                }
-
-                // Wait for navigation
-                try {
-                    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
-                    console.log("Navigation successful after entering 2FA code.");
-                    break; // Exit loop on success
-                } catch (navError) {
-                    console.error("Navigation did not complete after entering 2FA code.");
-                }
-            } catch (error) {
-                console.error(`2FA submission failed: ${error.message}. Retries left: ${twofaRetries - 1}`);
-
-                // Check if the page contains the "Sign-in is blocked" message
-                const isSignInBlocked = await page.evaluate(() => {
-                    return document.body.innerText.includes(
-                        "Sign-in is blocked. You've tried to sign in too many times with an incorrect account or password."
-                    );
-                });
-
-                if (isSignInBlocked) {
-                    console.error("Sign-in is blocked. Exiting task.");
-                    throw new Error("Sign-in is blocked. You've tried to sign in too many times with an incorrect account or password.");
-                }
-            }
-
-            twofaRetries--;
-        }
-
-        if (twofaRetries === 0) {
-            console.error("Failed to complete 2FA submission after retries.");
-            throw new Error("Failed to complete 2FA submission after retries.");
-        }
-
-
-        console.log("Handling dynamic login flow...");
-        const success = await handleDynamicLoginFlow(page);
-
-        if (success) {
-            console.log("Successfully navigated to Junk Email Settings.");
-            await saveCookies(page, email);
-            await addSafeSender(page);
-            await browser.close();
-            return { email, success: true };
+    let page = await browser.newPage();
+  
+    // Helper to swallow the known Puppeteer frame‐navigation race on goto
+    async function safeGoto(url, options) {
+      try {
+        await page.goto(url, options);
+      } catch (err) {
+        if (err.message.includes('We either navigate top level')) {
+          console.warn(`safeGoto: ignored frame‐navigation race for ${url}`);
         } else {
-            console.error("Failed to navigate to Junk Email Settings.");
+          throw err;
         }
-
-        await saveCookies(page, email);
-        console.log(`Successfully saved cookies for ${email}`);
-        await browser.close();
-
-        return { email, success: true };
-
-    } catch (error) {
-        console.error(`Error during login process for ${email}: ${error.message}`);
-        await browser.close(); // Ensure the browser closes on error
-        return { email, success: false, error: error.message };
+      }
     }
-}
-
+  
+    // === COOKIE RESTORATION PATH ===
+    try {
+      if (await loadCookies(page, email)) {
+        console.log("🔄 Cookies loaded, reinitializing tab…");
+        const cookies = await page.cookies();
+        await page.close();
+        page = await browser.newPage();
+        await page.setCookie(...cookies);
+        await page.authenticate({ username, password: pwd });
+  
+        // use safeGoto here
+        await safeGoto('https://outlook.live.com', { waitUntil: 'domcontentloaded', timeout: 10000 });
+        await delay(1500);
+        await safeGoto('https://outlook.live.com/mail/0/', { waitUntil: 'networkidle2', timeout: 20000 });
+        await delay(1500);
+  
+        const isOnInbox = page.url().includes('/mail/0');
+        const inboxReady = await page.evaluate(() =>
+          document.body.innerText.includes("Inbox") ||
+          !!document.querySelector('div[aria-label="Message list"], span.ms-Pivot-text')
+        );
+  
+        if (isOnInbox && inboxReady) {
+          console.log("✅ Cookie session restored — inbox ready.");
+          await markOtherTab(page);
+          await saveCookies(page, email);
+          await browser.close();
+          return { email, success: true };
+        }
+  
+        throw new Error("Inbox markers not found after cookie navigation.");
+      }
+    } catch (err) {
+      console.warn(`⚠️ Cookie restoration error: ${err.message}`);
+    }
+  
+    // === FULL LOGIN FLOW ===
+    try {
+      await page.authenticate({ username, password: pwd });
+      await safeGoto('https://login.live.com', { waitUntil: 'networkidle2' });
+  
+      // Detect if already on 2FA prompt
+      const is2FAPrompt = await page.evaluate(() =>
+        document.body.innerText.includes("Enter code") ||
+        !!document.querySelector('label[for="otc"]') ||
+        !!document.querySelector('#idTxtBx_SAOTCC_OTC')
+      );
+  
+      if (!is2FAPrompt) {
+        // Enter email
+        await page.waitForSelector('#usernameEntry, #i0116', { visible: true, timeout: 20000 });
+        const emailSel = await resolveSelector(page, ['#usernameEntry', '#i0116']);
+        await page.type(emailSel, email, { delay: 50 });
+  
+        // Click "Next" and wait for password field
+        const nextBtn = await resolveSelector(page, [
+          'button[data-tid="signin-button"]',
+          'button[type="submit"]',
+          '#idSIButton9'
+        ]);
+  
+        await Promise.all([
+          page.click(nextBtn, { delay: 50 }),
+          page.waitForSelector('#passwordEntry, #i0118', { visible: true, timeout: 30000 })
+        ]);
+  
+        // Enter password
+        const passSel = await resolveSelector(page, ['#passwordEntry', '#i0118']);
+        await page.type(passSel, password, { delay: 50 });
+  
+        const signInBtn = await resolveSelector(page, [
+          'button[data-tid="signin-submit-button"]',
+          'button[type="submit"]',
+          '#idSIButton9'
+        ]);
+        await safeClickAndNavigate(page, signInBtn);
+  
+        // Wait for navigation and check what page we land on
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+        
+        const currentUrl = page.url();
+        console.log(`📍 After password, current URL: ${currentUrl}`);
+        
+        // === PROCESS ENDPOINT ACTIONS ===
+        console.log("🔄 Processing endpoint actions...");
+        const endpointActionProcessed = await processEndpointActions(page);
+        
+        if (endpointActionProcessed) {
+          console.log("✅ Endpoint action completed");
+          // Wait a bit for any navigation to complete
+          await delay(2000);
+        }
+        
+        // Check for various possible next steps AFTER endpoint actions
+        const is2FARequired = await page.evaluate(() => {
+          return document.body.innerText.includes("Enter code") ||
+                 !!document.querySelector('#idTxtBx_SAOTCC_OTC') ||
+                 !!document.querySelector('input[name="otc"]') ||
+                 !!document.querySelector('input[placeholder*="code"]');
+        });
+        
+        const badCreds = await page.evaluate(() => {
+          const errEl = document.querySelector('#passwordError, #i0118Error');
+          return errEl && /incorrect/.test(errEl.innerText);
+        });
+        
+        if (badCreds) {
+          throw new Error("Incorrect credentials.");
+        }
+        
+        if (is2FARequired) {
+          console.log("🔐 2FA required after endpoint actions, handling...");
+          await handle2FA(page, browser, twofa);
+        } else {
+          console.log("✅ No 2FA required after endpoint actions, proceeding...");
+        }
+        
+      } else {
+        // Already on 2FA prompt
+        console.log("🔐 Already on 2FA prompt, handling...");
+        await handle2FA(page, browser, twofa);
+      }
+  
+      // === PROCESS ENDPOINT ACTIONS AGAIN (in case new pages appeared) ===
+      console.log("🔄 Final endpoint actions check...");
+      await processEndpointActions(page);
+  
+      // === STAY SIGNED IN ===
+      try {
+        // Wait for the Stay Signed In prompt
+        await page.waitForSelector('button[data-testid="primaryButton"], #idSIButton9', { timeout: 8000 });
+        const stayBtn = await page.$('button[data-testid="primaryButton"], #idSIButton9');
+        if (stayBtn) {
+          await safeClickAndNavigate(page, stayBtn);
+        } else {
+          await page.keyboard.press('Enter');
+          await delay(1000);
+        }
+      } catch (err) {
+        console.warn("⚠️ Skipped 'Stay signed in' flow:", err.message);
+      }
+  
+      // === FINAL NAVIGATION CHECK ===
+      // Make sure we end up at the inbox
+      const maxWaitTime = 15000;
+      const startTime = Date.now();
+      let inboxReached = false;
+      
+      while ((Date.now() - startTime) < maxWaitTime && !inboxReached) {
+        const currentUrl = page.url();
+        console.log(`📍 Current URL: ${currentUrl}`);
+        
+        // Process any remaining endpoint actions
+        await processEndpointActions(page);
+        
+        // Check if we're at the inbox
+        const isInbox = currentUrl.includes('/mail/0') || currentUrl.includes('outlook.live.com/mail');
+        const hasInboxElements = await page.evaluate(() => 
+          document.body.innerText.includes("Inbox") ||
+          !!document.querySelector('div[aria-label="Message list"], span.ms-Pivot-text')
+        );
+        
+        if (isInbox && hasInboxElements) {
+          inboxReached = true;
+          console.log("✅ Inbox reached successfully");
+          break;
+        }
+        
+        await delay(1000);
+      }
+      
+      if (!inboxReached) {
+        // Try to navigate to inbox manually
+        console.log("⚠️ Inbox not reached, trying manual navigation...");
+        await safeGoto('https://outlook.live.com/mail/0/', { waitUntil: 'networkidle2', timeout: 20000 });
+      }
+  
+      // === POST‑LOGIN ===
+      try {
+        console.log("🎉 Logged in — running post‑login tasks…");
+        await markOtherTab(page);
+        await saveCookies(page, email);
+        await browser.close();
+        return { email, success: true };
+  
+      } catch (err) {
+        console.error(`❌ Post‑login tasks failed for ${email}: ${err.message}`);
+        try {
+          await captureLoginScreenshot(page, email, 'post_login_error');
+        } catch {/* ignore screenshot errors */}
+        if (browser && browser.isConnected()) await browser.close();
+        return { email, success: false, error: err.message };
+      }
+  
+    } catch (err) {
+      console.error(`❌ Full login flow error for ${email}: ${err.message}`);
+      try {
+        await captureLoginScreenshot(page, email, 'login_error');
+      } catch {/* ignore screenshot errors */}
+      if (browser && browser.isConnected()) await browser.close();
+      return { email, success: false, error: err.message };
+    }
+  }
+  
+  async function captureLoginScreenshot(page, email, label) {
+    try {
+      const screenshotDir = path.resolve('./results/screenshots');
+      if (!fs.existsSync(screenshotDir)) {
+        fs.mkdirSync(screenshotDir, { recursive: true });
+      }
+      const filename = `${email.replace(/[@.]/g, '_')}_${label}.png`;
+      const screenshotPath = path.join(screenshotDir, filename);
+      await page.screenshot({ path: screenshotPath });
+      console.log(`📸 Screenshot saved: ${screenshotPath}`);
+    } catch (err) {
+      console.warn(`⚠️ Could not capture screenshot: ${err.message}`);
+    }
+  }
